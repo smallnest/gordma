@@ -22,6 +22,9 @@ type Endpoint struct {
 	// Peer holds the remote endpoint info exchanged over TCP (nil for rdma_cm).
 	Peer *handshake.EndpointInfo
 
+	// udAH is the address handle used to reach the peer on UD transport.
+	udAH *gordma.AddressHandle
+
 	// cm, when non-nil, owns the resources and is closed on Close.
 	cm *gordma.CMConn
 }
@@ -30,6 +33,9 @@ type Endpoint struct {
 func (e *Endpoint) Close() error {
 	if e == nil {
 		return nil
+	}
+	if e.udAH != nil {
+		_ = e.udAH.Close()
 	}
 	if e.cm != nil {
 		return e.cm.Close()
