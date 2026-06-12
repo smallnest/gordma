@@ -3,6 +3,7 @@ package perftest
 import (
 	"fmt"
 	"io"
+	"math"
 	"sort"
 	"time"
 )
@@ -45,7 +46,14 @@ type LatResult struct {
 	Bytes   int
 }
 
-// summary returns min/avg/max/p99 over the samples (sorted copy).
+// LatStats is the summary of a latency sample set, all in microseconds.
+type LatStats struct {
+	Min, Avg, Max, P99 float64
+}
+
+// sortedMicros converts the samples to microseconds and returns them sorted
+// ascending. Callers that need several statistics should sort once via this
+// helper and derive everything from the result rather than re-sorting.
 func (r LatResult) sortedMicros() []float64 {
 	us := make([]float64, len(r.Samples))
 	for i, s := range r.Samples {
@@ -55,64 +63,51 @@ func (r LatResult) sortedMicros() []float64 {
 	return us
 }
 
-// Min returns the minimum latency in microseconds.
-func (r LatResult) Min() float64 {
-	s := r.sortedMicros()
-	if len(s) == 0 {
-		return 0
-	}
-	return s[0]
-}
-
-// Max returns the maximum latency in microseconds.
-func (r LatResult) Max() float64 {
-	s := r.sortedMicros()
-	if len(s) == 0 {
-		return 0
-	}
-	return s[len(s)-1]
-}
-
-// Avg returns the mean latency in microseconds.
-func (r LatResult) Avg() float64 {
-	if len(r.Samples) == 0 {
-		return 0
-	}
-	var sum float64
-	for _, s := range r.Samples {
-		sum += float64(s.Nanoseconds()) / 1000.0
-	}
-	return sum / float64(len(r.Samples))
-}
-
-// Percentile returns the p-th percentile latency in microseconds, where p is
-// in [0,100]. Uses the nearest-rank method on the sorted samples.
-func (r LatResult) Percentile(p float64) float64 {
-	s := r.sortedMicros()
-	if len(s) == 0 {
+// percentileOf returns the p-th percentile (nearest-rank, 1-based) of an
+// already-sorted slice. p is clamped to [0,100].
+func percentileOf(sorted []float64, p float64) float64 {
+	if len(sorted) == 0 {
 		return 0
 	}
 	if p <= 0 {
-		return s[0]
+		return sorted[0]
 	}
 	if p >= 100 {
-		return s[len(s)-1]
+		return sorted[len(sorted)-1]
 	}
-	// nearest-rank: rank = ceil(p/100 * N), 1-based.
-	rank := int((p/100.0)*float64(len(s)) + 0.999999)
+	rank := int(math.Ceil((p / 100.0) * float64(len(sorted))))
 	if rank < 1 {
 		rank = 1
 	}
-	if rank > len(s) {
-		rank = len(s)
+	if rank > len(sorted) {
+		rank = len(sorted)
 	}
-	return s[rank-1]
+	return sorted[rank-1]
+}
+
+// Stats computes min/avg/max/p99 in a single sort pass over the samples.
+func (r LatResult) Stats() LatStats {
+	if len(r.Samples) == 0 {
+		return LatStats{}
+	}
+	sorted := r.sortedMicros()
+	var sum float64
+	for _, v := range sorted {
+		sum += v
+	}
+	return LatStats{
+		Min: sorted[0],
+		Avg: sum / float64(len(sorted)),
+		Max: sorted[len(sorted)-1],
+		P99: percentileOf(sorted, 99),
+	}
 }
 
 // WriteSummary prints the t_min/t_avg/t_max/p99 summary line in microseconds.
 func (r LatResult) WriteSummary(w io.Writer) {
+	s := r.Stats()
 	fmt.Fprintf(w, "%-12s %-10s %-10s %-10s %-10s\n", "#bytes", "t_min[us]", "t_avg[us]", "t_max[us]", "p99[us]")
-	fmt.Fprintf(w, "%-12d %-10.2f %-10.2f %-10.2f %-10.2f\n", r.Bytes, r.Min(), r.Avg(), r.Max(), r.Percentile(99))
+	fmt.Fprintf(w, "%-12d %-10.2f %-10.2f %-10.2f %-10.2f\n", r.Bytes, s.Min, s.Avg, s.Max, s.P99)
 }
 
 // HistogramBin is one bucket of a latency histogram.
@@ -128,7 +123,18 @@ func (r LatResult) Histogram(nbins int) []HistogramBin {
 	if nbins <= 0 || len(r.Samples) == 0 {
 		return nil
 	}
-	min, max := r.Min(), r.Max()
+	// Single O(n) pass for the extremes — no sort needed for bucketing.
+	min := float64(r.Samples[0].Nanoseconds()) / 1000.0
+	max := min
+	for _, s := range r.Samples {
+		v := float64(s.Nanoseconds()) / 1000.0
+		if v < min {
+			min = v
+		}
+		if v > max {
+			max = v
+		}
+	}
 	if max <= min {
 		// All samples equal: a single bucket.
 		return []HistogramBin{{LowMicros: min, HighMicros: min, Count: len(r.Samples)}}

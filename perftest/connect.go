@@ -81,10 +81,10 @@ func ConnectRDMACM(cfg Config) (*Endpoint, error) {
 
 func endpointFromCM(conn *gordma.CMConn) *Endpoint {
 	return &Endpoint{
-		PD:  conn.PD(),
-		CQ:  conn.CQ(),
-		QP:  conn.QP(),
-		cm:  conn,
+		PD: conn.PD(),
+		CQ: conn.CQ(),
+		QP: conn.QP(),
+		cm: conn,
 	}
 }
 

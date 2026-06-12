@@ -87,18 +87,19 @@ func TestLatResultStats(t *testing.T) {
 		samples[i] = time.Duration(i+1) * time.Microsecond // 1..100 us
 	}
 	r := LatResult{Samples: samples, Bytes: 64}
-	if min := r.Min(); min < 0.99 || min > 1.01 {
-		t.Errorf("Min = %f, want ~1", min)
+	st := r.Stats()
+	if st.Min < 0.99 || st.Min > 1.01 {
+		t.Errorf("Min = %f, want ~1", st.Min)
 	}
-	if max := r.Max(); max < 99.9 || max > 100.1 {
-		t.Errorf("Max = %f, want ~100", max)
+	if st.Max < 99.9 || st.Max > 100.1 {
+		t.Errorf("Max = %f, want ~100", st.Max)
 	}
-	if avg := r.Avg(); avg < 50 || avg > 51 {
-		t.Errorf("Avg = %f, want ~50.5", avg)
+	if st.Avg < 50 || st.Avg > 51 {
+		t.Errorf("Avg = %f, want ~50.5", st.Avg)
 	}
 	// p99 nearest-rank over 1..100 should be 99 or 100.
-	if p99 := r.Percentile(99); p99 < 98.9 || p99 > 100.1 {
-		t.Errorf("p99 = %f, want ~99-100", p99)
+	if st.P99 < 98.9 || st.P99 > 100.1 {
+		t.Errorf("p99 = %f, want ~99-100", st.P99)
 	}
 }
 

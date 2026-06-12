@@ -8,6 +8,11 @@ import (
 	"github.com/smallnest/gordma/handshake"
 )
 
+// defaultMRAccess is the access-flag set used for perftest buffers: the NIC
+// must read/write locally and the peer must be able to RDMA Write/Read into
+// the region for the one-sided tools.
+const defaultMRAccess = gordma.AccessLocalWrite | gordma.AccessRemoteWrite | gordma.AccessRemoteRead
+
 // SetupTCP builds the verbs resources for the manual (TCP handshake) path and
 // brings the RC QP to RTS by exchanging endpoint info with the peer. It
 // registers a single MR of cfg.Size (plus GRH room for UD) and returns the
@@ -71,7 +76,7 @@ func SetupTCP(cfg Config) (*Endpoint, *gordma.MR, error) {
 	if cfg.Transport == TransportUD {
 		bufSize += gordma.GRHLength
 	}
-	mr, err := pd.RegMRBuffer(bufSize, gordma.AccessLocalWrite|gordma.AccessRemoteWrite|gordma.AccessRemoteRead)
+	mr, err := pd.RegMRBuffer(bufSize, defaultMRAccess)
 	if err != nil {
 		ep.Close()
 		return nil, nil, err
@@ -169,7 +174,7 @@ func SetupTCP(cfg Config) (*Endpoint, *gordma.MR, error) {
 }
 
 func bringUpRC(qp *gordma.QP, port int, conn gordma.RCConnParams) error {
-	access := gordma.AccessLocalWrite | gordma.AccessRemoteWrite | gordma.AccessRemoteRead
+	access := defaultMRAccess
 	if err := qp.ModifyToInit(port, access); err != nil {
 		return err
 	}
@@ -204,7 +209,7 @@ func SetupTCPOrCM(cfg Config) (*Endpoint, *gordma.MR, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	mr, err := ep.PD.RegMRBuffer(cfg.Size, gordma.AccessLocalWrite|gordma.AccessRemoteWrite|gordma.AccessRemoteRead)
+	mr, err := ep.PD.RegMRBuffer(cfg.Size, defaultMRAccess)
 	if err != nil {
 		ep.Close()
 		return nil, nil, err

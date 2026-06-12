@@ -20,8 +20,8 @@ func main() {
 	if err != nil {
 		os.Exit(2)
 	}
-	if cfg.ConnMethod == perftest.ConnRDMACM {
-		fmt.Fprintln(os.Stderr, "go-write_lat: -R (rdma_cm) is not supported; RDMA Write needs the TCP handshake to exchange RKey/addr")
+	if err := cfg.RequireOneSidedTCP(); err != nil {
+		fmt.Fprintf(os.Stderr, "go-write_lat: %v\n", err)
 		os.Exit(2)
 	}
 	if err := run(cfg); err != nil {

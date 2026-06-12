@@ -26,17 +26,54 @@ func pollOne(cq *gordma.CQ, wc []gordma.WorkCompletion) error {
 	}
 }
 
+// runBWPipeline drives the credit-based bandwidth loop shared by the send,
+// write and read bandwidth benchmarks: it keeps up to cfg.TxDepth work requests
+// outstanding, posting a new one (via post) on each completion until cfg.Iters
+// have completed. post is given the work-request id to use. It returns the
+// measured bandwidth.
+func runBWPipeline(cfg Config, cq *gordma.CQ, post func(wrID uint64) error) (BWResult, error) {
+	wc := make([]gordma.WorkCompletion, cfg.TxDepth)
+	start := time.Now()
+	posted, completed := 0, 0
+	for posted < cfg.TxDepth && posted < cfg.Iters {
+		if err := post(uint64(posted)); err != nil {
+			return BWResult{}, err
+		}
+		posted++
+	}
+	for completed < cfg.Iters {
+		n, err := cq.Poll(wc)
+		if err != nil {
+			return BWResult{}, err
+		}
+		for i := 0; i < n; i++ {
+			if !wc[i].Status.OK() {
+				return BWResult{}, &gordma.CompletionError{Status: wc[i].Status, WRID: wc[i].WRID}
+			}
+			completed++
+			if posted < cfg.Iters {
+				if err := post(uint64(posted)); err != nil {
+					return BWResult{}, err
+				}
+				posted++
+			}
+		}
+	}
+	return BWResult{Bytes: cfg.Size, Iterations: cfg.Iters, Elapsed: time.Since(start)}, nil
+}
+
 // RunSendBW runs the Send/Recv bandwidth benchmark. The client posts cfg.Iters
 // sends keeping up to cfg.TxDepth outstanding; the server posts matching recvs.
 // It returns the measured bandwidth (client side) or a zero result (server).
 func RunSendBW(cfg Config, ep *Endpoint, mr *gordma.MR) (BWResult, error) {
-	wc := make([]gordma.WorkCompletion, cfg.TxDepth)
 	sg := gordma.SGEFromMR(mr, grhOffset(cfg), cfg.Size)
 
 	if cfg.IsServer() {
-		// Server receives cfg.Iters messages.
+		// Server receives cfg.Iters messages, keeping TxDepth recvs posted.
+		wc := make([]gordma.WorkCompletion, cfg.TxDepth)
+		rsg := recvSGE(cfg, mr)
 		for i := 0; i < cfg.TxDepth && i < cfg.Iters; i++ {
-			if err := ep.QP.PostRecv(gordma.RecvWR{WRID: uint64(i), SGList: []gordma.SGE{recvSGE(cfg, mr)}}); err != nil {
+			if err := ep.QP.PostRecv(gordma.RecvWR{WRID: uint64(i), SGList: []gordma.SGE{rsg}}); err != nil {
 				return BWResult{}, err
 			}
 		}
@@ -52,7 +89,7 @@ func RunSendBW(cfg Config, ep *Endpoint, mr *gordma.MR) (BWResult, error) {
 				}
 				got++
 				if got+cfg.TxDepth <= cfg.Iters {
-					if err := ep.QP.PostRecv(gordma.RecvWR{WRID: wc[i].WRID, SGList: []gordma.SGE{recvSGE(cfg, mr)}}); err != nil {
+					if err := ep.QP.PostRecv(gordma.RecvWR{WRID: wc[i].WRID, SGList: []gordma.SGE{rsg}}); err != nil {
 						return BWResult{}, err
 					}
 				}
@@ -61,34 +98,9 @@ func RunSendBW(cfg Config, ep *Endpoint, mr *gordma.MR) (BWResult, error) {
 		return BWResult{}, nil
 	}
 
-	// Client sends cfg.Iters messages, keeping TxDepth outstanding.
-	start := time.Now()
-	posted, completed := 0, 0
-	for posted < cfg.TxDepth && posted < cfg.Iters {
-		if err := postSend(cfg, ep, sg, uint64(posted)); err != nil {
-			return BWResult{}, err
-		}
-		posted++
-	}
-	for completed < cfg.Iters {
-		n, err := ep.CQ.Poll(wc)
-		if err != nil {
-			return BWResult{}, err
-		}
-		for i := 0; i < n; i++ {
-			if !wc[i].Status.OK() {
-				return BWResult{}, &gordma.CompletionError{Status: wc[i].Status, WRID: wc[i].WRID}
-			}
-			completed++
-			if posted < cfg.Iters {
-				if err := postSend(cfg, ep, sg, uint64(posted)); err != nil {
-					return BWResult{}, err
-				}
-				posted++
-			}
-		}
-	}
-	return BWResult{Bytes: cfg.Size, Iterations: cfg.Iters, Elapsed: time.Since(start)}, nil
+	return runBWPipeline(cfg, ep.CQ, func(wrID uint64) error {
+		return postSend(cfg, ep, sg, wrID)
+	})
 }
 
 // RunSendLat runs the Send/Recv ping-pong latency benchmark. The client times
