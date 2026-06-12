@@ -1,0 +1,59 @@
+name: CI
+
+# Hardware-independent CI: vet, build (real + stub), and unit tests. RDMA
+# integration tests require an RDMA NIC and run on a dedicated runner /
+# manually (see the integration job, which is gated off by default).
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  build-and-test:
+    name: vet / build / test (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Install RDMA dev libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libibverbs-dev librdmacm-dev
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go build (cgo / real)
+        run: go build ./...
+
+      - name: go build (stub, CGO_ENABLED=0)
+        run: CGO_ENABLED=0 go build ./...
+
+      - name: Unit tests (hardware-independent)
+        run: go test -race ./...
+
+  cross-build:
+    name: cross-compile stubs
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target:
+          - { goos: darwin, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+          - { goos: windows, goarch: amd64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      - name: build ${{ matrix.target.goos }}/${{ matrix.target.goarch }}
+        env:
+          GOOS: ${{ matrix.target.goos }}
+          GOARCH: ${{ matrix.target.goarch }}
+        run: go build ./...
