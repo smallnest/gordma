@@ -107,6 +107,24 @@ func (c *Config) Validate() error {
 	if c.TxDepth <= 0 {
 		return fmt.Errorf("perftest: -t tx-depth must be > 0, got %d", c.TxDepth)
 	}
+	if c.GIDIndex < 0 {
+		return fmt.Errorf("perftest: -x gid index must be >= 0, got %d", c.GIDIndex)
+	}
+	return nil
+}
+
+// RequireOneSidedTCP validates the constraints common to the RDMA Write/Read
+// tools: those ops are RC-only and need the TCP handshake to exchange the
+// peer's RKey/remote address, so rdma_cm (-R) and UD (-c UD) are rejected.
+// requireRC controls whether the UD check applies (Read is RC-only; Write is
+// too in this toolset). Returns a descriptive error or nil.
+func (c *Config) RequireOneSidedTCP() error {
+	if c.ConnMethod == ConnRDMACM {
+		return fmt.Errorf("-R (rdma_cm) is not supported; RDMA Write/Read needs the TCP handshake to exchange RKey/addr")
+	}
+	if c.Transport == TransportUD {
+		return fmt.Errorf("RDMA Write/Read is RC-only; -c UD is not supported")
+	}
 	return nil
 }
 

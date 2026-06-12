@@ -16,10 +16,8 @@ func RunReadBW(cfg Config, ep *Endpoint, mr *gordma.MR) (BWResult, error) {
 	if ep.Peer == nil {
 		return BWResult{}, errNoPeer
 	}
-	wc := make([]gordma.WorkCompletion, cfg.TxDepth)
 	sg := gordma.SGEFromMR(mr, 0, cfg.Size)
-
-	read := func(wrID uint64) error {
+	return runBWPipeline(cfg, ep.CQ, func(wrID uint64) error {
 		return ep.QP.PostSend(gordma.SendWR{
 			WRID:       wrID,
 			Opcode:     gordma.OpRead,
@@ -28,35 +26,7 @@ func RunReadBW(cfg Config, ep *Endpoint, mr *gordma.MR) (BWResult, error) {
 			RemoteAddr: ep.Peer.RemoteAddr,
 			RKey:       ep.Peer.RKey,
 		})
-	}
-
-	start := time.Now()
-	posted, completed := 0, 0
-	for posted < cfg.TxDepth && posted < cfg.Iters {
-		if err := read(uint64(posted)); err != nil {
-			return BWResult{}, err
-		}
-		posted++
-	}
-	for completed < cfg.Iters {
-		n, err := ep.CQ.Poll(wc)
-		if err != nil {
-			return BWResult{}, err
-		}
-		for i := 0; i < n; i++ {
-			if !wc[i].Status.OK() {
-				return BWResult{}, &gordma.CompletionError{Status: wc[i].Status, WRID: wc[i].WRID}
-			}
-			completed++
-			if posted < cfg.Iters {
-				if err := read(uint64(posted)); err != nil {
-					return BWResult{}, err
-				}
-				posted++
-			}
-		}
-	}
-	return BWResult{Bytes: cfg.Size, Iterations: cfg.Iters, Elapsed: time.Since(start)}, nil
+	})
 }
 
 // RunReadLat runs the RDMA Read latency benchmark. Each RDMA_READ is itself a

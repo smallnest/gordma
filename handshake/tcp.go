@@ -32,7 +32,7 @@ func (s *Server) Accept(local EndpointInfo, timeout time.Duration) (EndpointInfo
 	if err != nil {
 		return EndpointInfo{}, err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	return exchange(conn, local, timeout)
 }
 
@@ -59,6 +59,6 @@ func Dial(addr string, local EndpointInfo, timeout time.Duration) (EndpointInfo,
 	if err != nil {
 		return EndpointInfo{}, err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	return exchange(conn, local, timeout)
 }

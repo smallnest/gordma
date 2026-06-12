@@ -18,11 +18,11 @@ import (
 type AccessFlag int
 
 const (
-	AccessLocalWrite  AccessFlag = C.IBV_ACCESS_LOCAL_WRITE
-	AccessRemoteWrite AccessFlag = C.IBV_ACCESS_REMOTE_WRITE
-	AccessRemoteRead  AccessFlag = C.IBV_ACCESS_REMOTE_READ
+	AccessLocalWrite   AccessFlag = C.IBV_ACCESS_LOCAL_WRITE
+	AccessRemoteWrite  AccessFlag = C.IBV_ACCESS_REMOTE_WRITE
+	AccessRemoteRead   AccessFlag = C.IBV_ACCESS_REMOTE_READ
 	AccessRemoteAtomic AccessFlag = C.IBV_ACCESS_REMOTE_ATOMIC
-	AccessMWBind      AccessFlag = C.IBV_ACCESS_MW_BIND
+	AccessMWBind       AccessFlag = C.IBV_ACCESS_MW_BIND
 )
 
 // PD is a protection domain. All MRs and QPs are associated with a PD.

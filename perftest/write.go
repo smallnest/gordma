@@ -1,7 +1,9 @@
 package perftest
 
 import (
+	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/smallnest/gordma"
 )
@@ -23,12 +25,8 @@ func RunWriteBW(cfg Config, ep *Endpoint, mr *gordma.MR) (BWResult, error) {
 	if ep.Peer == nil {
 		return BWResult{}, errNoPeer
 	}
-	wc := make([]gordma.WorkCompletion, cfg.TxDepth)
 	sg := gordma.SGEFromMR(mr, 0, cfg.Size)
-
-	start := time.Now()
-	posted, completed := 0, 0
-	post := func(wrID uint64) error {
+	return runBWPipeline(cfg, ep.CQ, func(wrID uint64) error {
 		return ep.QP.PostSend(gordma.SendWR{
 			WRID:       wrID,
 			Opcode:     gordma.OpWrite,
@@ -37,32 +35,7 @@ func RunWriteBW(cfg Config, ep *Endpoint, mr *gordma.MR) (BWResult, error) {
 			RemoteAddr: ep.Peer.RemoteAddr,
 			RKey:       ep.Peer.RKey,
 		})
-	}
-	for posted < cfg.TxDepth && posted < cfg.Iters {
-		if err := post(uint64(posted)); err != nil {
-			return BWResult{}, err
-		}
-		posted++
-	}
-	for completed < cfg.Iters {
-		n, err := ep.CQ.Poll(wc)
-		if err != nil {
-			return BWResult{}, err
-		}
-		for i := 0; i < n; i++ {
-			if !wc[i].Status.OK() {
-				return BWResult{}, &gordma.CompletionError{Status: wc[i].Status, WRID: wc[i].WRID}
-			}
-			completed++
-			if posted < cfg.Iters {
-				if err := post(uint64(posted)); err != nil {
-					return BWResult{}, err
-				}
-				posted++
-			}
-		}
-	}
-	return BWResult{Bytes: cfg.Size, Iterations: cfg.Iters, Elapsed: time.Since(start)}, nil
+	})
 }
 
 // RunWriteLat runs the RDMA Write latency benchmark using the perftest
@@ -85,6 +58,29 @@ func RunWriteLat(cfg Config, ep *Endpoint, mr *gordma.MR) (LatResult, error) {
 	sg := gordma.SGEFromMR(mr, 0, cfg.Size)
 	wc := make([]gordma.WorkCompletion, 2)
 
+	// The sentinel byte is written by the peer's NIC via RDMA, invisibly to the
+	// Go runtime, so a plain `buf[last]` spin-load may be hoisted out of the
+	// loop. Go has no 8-bit atomic, so we poll through the aligned uint32 word
+	// that contains buf[last]. lane is the byte within that word; the guard
+	// below keeps the word in-bounds (so this needs cfg.Size >= 4). The other
+	// three bytes of the word hold payload the tool does not verify.
+	wordIdx := last &^ 3
+	lane := uint(last&3) * 8
+	if wordIdx+4 > len(buf) {
+		return LatResult{}, errBufferTooSmall
+	}
+	word := (*uint32)(unsafe.Pointer(&buf[wordIdx]))
+	getSentinel := func() byte { return byte(atomic.LoadUint32(word) >> lane) }
+	setSentinel := func(v byte) {
+		for {
+			old := atomic.LoadUint32(word)
+			next := (old &^ (uint32(0xff) << lane)) | uint32(v)<<lane
+			if atomic.CompareAndSwapUint32(word, old, next) {
+				return
+			}
+		}
+	}
+
 	write := func(wrID uint64) error {
 		return ep.QP.PostSend(gordma.SendWR{
 			WRID:       wrID,
@@ -98,13 +94,13 @@ func RunWriteLat(cfg Config, ep *Endpoint, mr *gordma.MR) (LatResult, error) {
 
 	if cfg.IsServer() {
 		// Server: for each iteration, wait for the client's write to land
-		// (last byte flips), then write back with the next sentinel.
+		// (sentinel flips), then write back with the next sentinel.
 		var expect byte = 1
 		for i := 0; i < cfg.Iters; i++ {
-			for buf[last] != expect {
+			for getSentinel() != expect {
 				// busy-wait for the remote write to complete
 			}
-			buf[last] = expect + 1 // echo sentinel
+			setSentinel(expect + 1) // echo sentinel
 			if err := write(uint64(i)); err != nil {
 				return LatResult{}, err
 			}
@@ -116,11 +112,11 @@ func RunWriteLat(cfg Config, ep *Endpoint, mr *gordma.MR) (LatResult, error) {
 		return LatResult{Bytes: cfg.Size}, nil
 	}
 
-	// Client: set sentinel, write, then poll local last byte for the echo.
+	// Client: set sentinel, write, then poll local sentinel for the echo.
 	samples := make([]time.Duration, 0, cfg.Iters)
 	var sentinel byte = 1
 	for i := 0; i < cfg.Iters; i++ {
-		buf[last] = sentinel
+		setSentinel(sentinel)
 		echo := sentinel + 1
 		t0 := time.Now()
 		if err := write(uint64(i)); err != nil {
@@ -129,7 +125,7 @@ func RunWriteLat(cfg Config, ep *Endpoint, mr *gordma.MR) (LatResult, error) {
 		if err := pollOne(ep.CQ, wc); err != nil {
 			return LatResult{}, err
 		}
-		for buf[last] != echo {
+		for getSentinel() != echo {
 			// busy-wait for the server's echo write
 		}
 		samples = append(samples, time.Since(t0))

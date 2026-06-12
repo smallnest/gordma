@@ -31,3 +31,7 @@ go.work.sum
 # .idea/
 # .vscode/
 .loop-state.json
+
+# build artifacts
+bin/
+coverage.out

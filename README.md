@@ -17,7 +17,7 @@ Context, PD, MR, CQ, QP, AH, CompChannel) and a set of `cmd/` tools
 ## Requirements
 
 - **Runtime (full functionality):** Linux with RDMA hardware (e.g. Mellanox/NVIDIA
-  NICs over RoCE v2), Go 1.22+, and the development headers/libraries:
+  NICs over RoCE v2), Go 1.26+, and the development headers/libraries:
 
   ```sh
   # Debian/Ubuntu
@@ -117,12 +117,14 @@ Common flags: `-s` size, `-n` iterations, `-d` device, `-i` HCA port,
 ```sh
 go build -o bin/ ./cmd/...
 
-# Server, then client (RoCE v2: pick the RoCE v2 GID index with -x):
-./bin/go-send_bw -s 65536 -n 5000 -x 3
-./bin/go-send_bw -s 65536 -n 5000 -x 3 <server-ip>:18515
+# Two nodes, both using device mlx5_3 and RoCE v2 GID index 3 (-d mlx5_3 -x 3).
+# On the server node (e.g. 10.0.0.1):
+./bin/go-send_bw -s 65536 -n 5000 -d mlx5_3 -x 3
+# On the client node, pointing at the server:
+./bin/go-send_bw -s 65536 -n 5000 -d mlx5_3 -x 3 10.0.0.1:18515
 
-# Latency with a full histogram:
-./bin/go-send_lat --output=histogram <server-ip>:18515
+# Latency with a full histogram (client side):
+./bin/go-send_lat -d mlx5_3 -x 3 --output=histogram 10.0.0.1:18515
 ```
 
 ## Testing & CI

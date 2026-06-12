@@ -10,10 +10,6 @@ package gordma
 import "C"
 
 // supported is true on Linux builds with cgo, where libibverbs and librdmacm
-// are linked. The blank reference to C keeps the cgo preamble live so that the
-// linker flags are honored even before any verbs call exists.
+// are linked. The cgo preamble above carries the linker flags
+// (-libverbs -lrdmacm) for the package's Linux files.
 const supported = true
-
-// cgoVerbsLinked is referenced to ensure the cgo import is not pruned by the
-// compiler while the wrapper is still being built up issue by issue.
-var _ = C.IBV_QPT_RC

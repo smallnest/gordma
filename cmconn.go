@@ -11,10 +11,10 @@ const DefaultCMTimeout = 5 * time.Second
 // work requests immediately. It bundles the QP with the PD/CQ that rdma_cm
 // created so resources can be released together on Close.
 type CMConn struct {
-	qp  *QP
-	cq  *CQ
-	pd  *PD
-	id  cmID // platform handle
+	qp *QP
+	cq *CQ
+	pd *PD
+	id cmID // platform handle
 }
 
 // QP returns the connection's queue pair (already in RTS).

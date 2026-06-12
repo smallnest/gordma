@@ -22,10 +22,10 @@ func (s WCStatus) OK() bool { return s == WCSuccess }
 type WCOpcode int
 
 const (
-	WCSend     WCOpcode = 0
-	WCRDMAWrite WCOpcode = 1
-	WCRDMARead WCOpcode = 2
-	WCRecv     WCOpcode = 128
+	WCSend            WCOpcode = 0
+	WCRDMAWrite       WCOpcode = 1
+	WCRDMARead        WCOpcode = 2
+	WCRecv            WCOpcode = 128
 	WCRecvRDMAWithImm WCOpcode = 129
 )
 

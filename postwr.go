@@ -56,8 +56,8 @@ type SendWR struct {
 	RKey       uint32
 
 	// UD addressing (UD QPs only).
-	AH      *AddressHandle
-	RemoteQPN uint32
+	AH         *AddressHandle
+	RemoteQPN  uint32
 	RemoteQKey uint32
 }
 

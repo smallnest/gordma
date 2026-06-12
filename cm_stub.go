@@ -22,5 +22,11 @@ func (l *Listener) Close() error { return nil }
 // Dial returns ErrNotSupported.
 func Dial(addr string, timeout time.Duration) (*CMConn, error) { return nil, ErrNotSupported }
 
-// Close is a no-op.
-func (c *CMConn) Close() error { return nil }
+// Close is a no-op. It references c.id so the shared CMConn.id field (only
+// populated on the cgo build) is not reported unused on the stub build.
+func (c *CMConn) Close() error {
+	if c != nil {
+		_ = c.id
+	}
+	return nil
+}

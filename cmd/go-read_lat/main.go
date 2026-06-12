@@ -19,7 +19,7 @@ func main() {
 	if err != nil {
 		os.Exit(2)
 	}
-	if err := validate(cfg); err != nil {
+	if err := cfg.RequireOneSidedTCP(); err != nil {
 		fmt.Fprintf(os.Stderr, "go-read_lat: %v\n", err)
 		os.Exit(2)
 	}
@@ -29,23 +29,13 @@ func main() {
 	}
 }
 
-func validate(cfg perftest.Config) error {
-	if cfg.ConnMethod == perftest.ConnRDMACM {
-		return fmt.Errorf("-R (rdma_cm) is not supported; RDMA Read needs the TCP handshake to exchange RKey/addr")
-	}
-	if cfg.Transport == perftest.TransportUD {
-		return fmt.Errorf("RDMA Read is RC-only; -c UD is not supported")
-	}
-	return nil
-}
-
 func run(cfg perftest.Config) error {
 	ep, mr, err := perftest.SetupTCP(cfg)
 	if err != nil {
 		return err
 	}
-	defer ep.Close()
-	defer mr.Close()
+	defer func() { _ = ep.Close() }()
+	defer func() { _ = mr.Close() }()
 
 	res, err := perftest.RunReadLat(cfg, ep, mr)
 	if err != nil {

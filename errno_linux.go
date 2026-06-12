@@ -13,11 +13,7 @@ import "syscall"
 // lastErrno returns the current C errno as a Go error. Most verbs functions
 // signal failure with a NULL return and set errno.
 func lastErrno() error {
-	e := syscall.Errno(C.gordma_errno())
-	if e == 0 {
-		return syscall.Errno(0)
-	}
-	return e
+	return syscall.Errno(C.gordma_errno())
 }
 
 // errnoFromRC converts a non-zero verbs return code into a Go error. Several

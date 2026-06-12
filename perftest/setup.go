@@ -8,6 +8,11 @@ import (
 	"github.com/smallnest/gordma/handshake"
 )
 
+// defaultMRAccess is the access-flag set used for perftest buffers: the NIC
+// must read/write locally and the peer must be able to RDMA Write/Read into
+// the region for the one-sided tools.
+const defaultMRAccess = gordma.AccessLocalWrite | gordma.AccessRemoteWrite | gordma.AccessRemoteRead
+
 // SetupTCP builds the verbs resources for the manual (TCP handshake) path and
 // brings the RC QP to RTS by exchanging endpoint info with the peer. It
 // registers a single MR of cfg.Size (plus GRH room for UD) and returns the
@@ -44,25 +49,25 @@ func SetupTCP(cfg Config) (*Endpoint, *gordma.MR, error) {
 
 	port, err := ctx.QueryPort(cfg.IBPort)
 	if err != nil {
-		ep.Close()
+		_ = ep.Close()
 		return nil, nil, err
 	}
 	gid, err := ctx.QueryGID(cfg.IBPort, cfg.GIDIndex)
 	if err != nil {
-		ep.Close()
+		_ = ep.Close()
 		return nil, nil, err
 	}
 
 	pd, err := ctx.AllocPD()
 	if err != nil {
-		ep.Close()
+		_ = ep.Close()
 		return nil, nil, err
 	}
 	ep.PD = pd
 
 	cq, err := ctx.CreateCQ(cfg.TxDepth*2+1, nil)
 	if err != nil {
-		ep.Close()
+		_ = ep.Close()
 		return nil, nil, err
 	}
 	ep.CQ = cq
@@ -71,9 +76,9 @@ func SetupTCP(cfg Config) (*Endpoint, *gordma.MR, error) {
 	if cfg.Transport == TransportUD {
 		bufSize += gordma.GRHLength
 	}
-	mr, err := pd.RegMRBuffer(bufSize, gordma.AccessLocalWrite|gordma.AccessRemoteWrite|gordma.AccessRemoteRead)
+	mr, err := pd.RegMRBuffer(bufSize, defaultMRAccess)
 	if err != nil {
-		ep.Close()
+		_ = ep.Close()
 		return nil, nil, err
 	}
 
@@ -97,7 +102,7 @@ func SetupTCP(cfg Config) (*Endpoint, *gordma.MR, error) {
 	}
 	if err != nil {
 		_ = mr.Close()
-		ep.Close()
+		_ = ep.Close()
 		return nil, nil, err
 	}
 	ep.QP = qp
@@ -116,7 +121,7 @@ func SetupTCP(cfg Config) (*Endpoint, *gordma.MR, error) {
 	peer, err := ExchangeOverTCP(cfg, local)
 	if err != nil {
 		_ = mr.Close()
-		ep.Close()
+		_ = ep.Close()
 		return nil, nil, err
 	}
 	ep.Peer = &peer
@@ -128,7 +133,7 @@ func SetupTCP(cfg Config) (*Endpoint, *gordma.MR, error) {
 	if cfg.Transport == TransportUD {
 		if err := bringUpUD(qp, cfg.IBPort, localPSN); err != nil {
 			_ = mr.Close()
-			ep.Close()
+			_ = ep.Close()
 			return nil, nil, err
 		}
 		// Build the address handle to reach the peer on UD.
@@ -142,7 +147,7 @@ func SetupTCP(cfg Config) (*Endpoint, *gordma.MR, error) {
 		})
 		if err != nil {
 			_ = mr.Close()
-			ep.Close()
+			_ = ep.Close()
 			return nil, nil, err
 		}
 		ep.udAH = ah
@@ -161,7 +166,7 @@ func SetupTCP(cfg Config) (*Endpoint, *gordma.MR, error) {
 		}
 		if err := bringUpRC(qp, cfg.IBPort, conn); err != nil {
 			_ = mr.Close()
-			ep.Close()
+			_ = ep.Close()
 			return nil, nil, err
 		}
 	}
@@ -169,7 +174,7 @@ func SetupTCP(cfg Config) (*Endpoint, *gordma.MR, error) {
 }
 
 func bringUpRC(qp *gordma.QP, port int, conn gordma.RCConnParams) error {
-	access := gordma.AccessLocalWrite | gordma.AccessRemoteWrite | gordma.AccessRemoteRead
+	access := defaultMRAccess
 	if err := qp.ModifyToInit(port, access); err != nil {
 		return err
 	}
@@ -204,9 +209,9 @@ func SetupTCPOrCM(cfg Config) (*Endpoint, *gordma.MR, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	mr, err := ep.PD.RegMRBuffer(cfg.Size, gordma.AccessLocalWrite|gordma.AccessRemoteWrite|gordma.AccessRemoteRead)
+	mr, err := ep.PD.RegMRBuffer(cfg.Size, defaultMRAccess)
 	if err != nil {
-		ep.Close()
+		_ = ep.Close()
 		return nil, nil, err
 	}
 	return ep, mr, nil
