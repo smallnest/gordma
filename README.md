@@ -24,10 +24,18 @@ Context, PD, MR, CQ, QP, AH, CompChannel) and a set of `cmd/` tools
   sudo apt-get install libibverbs-dev librdmacm-dev
   ```
 
-- **Other platforms (build only):** the package compiles on macOS and other
-  non-Linux targets via build-tag-isolated stubs. RDMA calls return
-  `gordma.ErrNotSupported` at runtime instead of crashing, so you can develop
-  and run unit tests off-target. Use `gordma.Supported()` to check at runtime.
+- **Other platforms (build only):** the package compiles on macOS, Windows and
+  other non-Linux targets, and on Linux with `CGO_ENABLED=0`, via build-tag
+  isolated stubs (`*_stub.go`, guarded by `//go:build !linux || !cgo`). RDMA
+  calls return `gordma.ErrNotSupported` at runtime instead of crashing, so you
+  can develop and run unit tests off-target. Use `gordma.Supported()` to check
+  at runtime. The exported API is identical across both builds.
+
+  ```sh
+  GOOS=darwin  GOARCH=arm64 go build ./...   # stub
+  GOOS=windows GOARCH=amd64 go build ./...   # stub
+  CGO_ENABLED=0 go build ./...               # stub (even on Linux)
+  ```
 
 ## Build
 
