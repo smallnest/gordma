@@ -19,7 +19,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.26'
 
       - name: Install RDMA dev libraries
         run: |
@@ -51,7 +51,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.26'
       - name: build ${{ matrix.target.goos }}/${{ matrix.target.goarch }}
         env:
           GOOS: ${{ matrix.target.goos }}

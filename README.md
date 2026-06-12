@@ -17,7 +17,7 @@ Context, PD, MR, CQ, QP, AH, CompChannel) and a set of `cmd/` tools
 ## Requirements
 
 - **Runtime (full functionality):** Linux with RDMA hardware (e.g. Mellanox/NVIDIA
-  NICs over RoCE v2), Go 1.22+, and the development headers/libraries:
+  NICs over RoCE v2), Go 1.26+, and the development headers/libraries:
 
   ```sh
   # Debian/Ubuntu
