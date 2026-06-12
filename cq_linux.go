@@ -4,7 +4,15 @@ package gordma
 
 /*
 #include <stdlib.h>
+#include <arpa/inet.h>
 #include <infiniband/verbs.h>
+
+// wc_imm_data extracts the immediate data from a completion. imm_data lives in
+// an anonymous union in struct ibv_wc (so cgo cannot name it) and is carried in
+// network byte order, so we convert to host order with ntohl.
+static uint32_t wc_imm_data(struct ibv_wc *wc) {
+	return ntohl(wc->imm_data);
+}
 */
 import "C"
 
@@ -120,7 +128,7 @@ func (q *CQ) Poll(wc []WorkCompletion) (int, error) {
 		}
 		if (c.wc_flags & C.IBV_WC_WITH_IMM) != 0 {
 			wc[i].HasImm = true
-			wc[i].ImmData = uint32(c.imm_data)
+			wc[i].ImmData = uint32(C.wc_imm_data(c))
 		}
 	}
 	return int(got), nil
