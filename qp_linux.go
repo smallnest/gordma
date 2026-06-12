@@ -31,6 +31,10 @@ type QP struct {
 	qp  *C.struct_ibv_qp
 	pd  *PD
 	typ QPType
+	// sendSG/recvSG are reusable SGE scratch buffers so the post hot path
+	// allocates nothing in steady state.
+	sendSG sgeScratch
+	recvSG sgeScratch
 }
 
 // CreateQP creates a queue pair in the RESET state on this PD.
