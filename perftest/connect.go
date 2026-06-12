@@ -65,7 +65,7 @@ func ConnectRDMACM(cfg Config) (*Endpoint, error) {
 		if err != nil {
 			return nil, err
 		}
-		defer ln.Close()
+		defer func() { _ = ln.Close() }()
 		conn, err := ln.Accept()
 		if err != nil {
 			return nil, err
@@ -99,7 +99,7 @@ func ExchangeOverTCP(cfg Config, local handshake.EndpointInfo) (handshake.Endpoi
 		if err != nil {
 			return handshake.EndpointInfo{}, err
 		}
-		defer srv.Close()
+		defer func() { _ = srv.Close() }()
 		return srv.Accept(local, timeout)
 	}
 	return handshake.Dial(cfg.ServerAddr, local, timeout)

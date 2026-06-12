@@ -13,7 +13,7 @@ func TestExchangeRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
 	}
-	defer srv.Close()
+	defer func() { _ = srv.Close() }()
 
 	serverInfo := EndpointInfo{
 		QPN: 0x111, PSN: 0xabc, LID: 7, GIDIndex: 3,

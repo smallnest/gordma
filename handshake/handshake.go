@@ -40,7 +40,7 @@ type EndpointInfo struct {
 func writeInfo(conn net.Conn, info EndpointInfo, timeout time.Duration) error {
 	if timeout > 0 {
 		_ = conn.SetWriteDeadline(time.Now().Add(timeout))
-		defer conn.SetWriteDeadline(time.Time{})
+		defer func() { _ = conn.SetWriteDeadline(time.Time{}) }()
 	}
 	b, err := json.Marshal(info)
 	if err != nil {
@@ -56,7 +56,7 @@ func writeInfo(conn net.Conn, info EndpointInfo, timeout time.Duration) error {
 func readInfo(r *bufio.Reader, conn net.Conn, timeout time.Duration) (EndpointInfo, error) {
 	if timeout > 0 {
 		_ = conn.SetReadDeadline(time.Now().Add(timeout))
-		defer conn.SetReadDeadline(time.Time{})
+		defer func() { _ = conn.SetReadDeadline(time.Time{}) }()
 	}
 	line, err := r.ReadBytes('\n')
 	if err != nil {

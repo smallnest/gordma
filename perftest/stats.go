@@ -34,8 +34,8 @@ func (r BWResult) MsgRateMpps() float64 {
 
 // WriteBW prints the perftest-style bandwidth table to w.
 func (r BWResult) WriteBW(w io.Writer) {
-	fmt.Fprintf(w, "%-12s %-12s %-18s %-14s\n", "#bytes", "#iterations", "BW average[MB/s]", "MsgRate[Mpps]")
-	fmt.Fprintf(w, "%-12d %-12d %-18.2f %-14.6f\n", r.Bytes, r.Iterations, r.MBPerSec(), r.MsgRateMpps())
+	_, _ = fmt.Fprintf(w, "%-12s %-12s %-18s %-14s\n", "#bytes", "#iterations", "BW average[MB/s]", "MsgRate[Mpps]")
+	_, _ = fmt.Fprintf(w, "%-12d %-12d %-18.2f %-14.6f\n", r.Bytes, r.Iterations, r.MBPerSec(), r.MsgRateMpps())
 }
 
 // LatResult holds per-iteration latency samples (in nanoseconds) and computes
@@ -106,8 +106,8 @@ func (r LatResult) Stats() LatStats {
 // WriteSummary prints the t_min/t_avg/t_max/p99 summary line in microseconds.
 func (r LatResult) WriteSummary(w io.Writer) {
 	s := r.Stats()
-	fmt.Fprintf(w, "%-12s %-10s %-10s %-10s %-10s\n", "#bytes", "t_min[us]", "t_avg[us]", "t_max[us]", "p99[us]")
-	fmt.Fprintf(w, "%-12d %-10.2f %-10.2f %-10.2f %-10.2f\n", r.Bytes, s.Min, s.Avg, s.Max, s.P99)
+	_, _ = fmt.Fprintf(w, "%-12s %-10s %-10s %-10s %-10s\n", "#bytes", "t_min[us]", "t_avg[us]", "t_max[us]", "p99[us]")
+	_, _ = fmt.Fprintf(w, "%-12d %-10.2f %-10.2f %-10.2f %-10.2f\n", r.Bytes, s.Min, s.Avg, s.Max, s.P99)
 }
 
 // HistogramBin is one bucket of a latency histogram.
@@ -162,9 +162,9 @@ func (r LatResult) Histogram(nbins int) []HistogramBin {
 // WriteHistogram prints a full latency histogram followed by the summary.
 func (r LatResult) WriteHistogram(w io.Writer, nbins int) {
 	bins := r.Histogram(nbins)
-	fmt.Fprintf(w, "%-12s %-12s %-8s\n", "low[us]", "high[us]", "count")
+	_, _ = fmt.Fprintf(w, "%-12s %-12s %-8s\n", "low[us]", "high[us]", "count")
 	for _, b := range bins {
-		fmt.Fprintf(w, "%-12.2f %-12.2f %-8d\n", b.LowMicros, b.HighMicros, b.Count)
+		_, _ = fmt.Fprintf(w, "%-12.2f %-12.2f %-8d\n", b.LowMicros, b.HighMicros, b.Count)
 	}
 	r.WriteSummary(w)
 }

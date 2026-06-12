@@ -49,25 +49,25 @@ func SetupTCP(cfg Config) (*Endpoint, *gordma.MR, error) {
 
 	port, err := ctx.QueryPort(cfg.IBPort)
 	if err != nil {
-		ep.Close()
+		_ = ep.Close()
 		return nil, nil, err
 	}
 	gid, err := ctx.QueryGID(cfg.IBPort, cfg.GIDIndex)
 	if err != nil {
-		ep.Close()
+		_ = ep.Close()
 		return nil, nil, err
 	}
 
 	pd, err := ctx.AllocPD()
 	if err != nil {
-		ep.Close()
+		_ = ep.Close()
 		return nil, nil, err
 	}
 	ep.PD = pd
 
 	cq, err := ctx.CreateCQ(cfg.TxDepth*2+1, nil)
 	if err != nil {
-		ep.Close()
+		_ = ep.Close()
 		return nil, nil, err
 	}
 	ep.CQ = cq
@@ -78,7 +78,7 @@ func SetupTCP(cfg Config) (*Endpoint, *gordma.MR, error) {
 	}
 	mr, err := pd.RegMRBuffer(bufSize, defaultMRAccess)
 	if err != nil {
-		ep.Close()
+		_ = ep.Close()
 		return nil, nil, err
 	}
 
@@ -102,7 +102,7 @@ func SetupTCP(cfg Config) (*Endpoint, *gordma.MR, error) {
 	}
 	if err != nil {
 		_ = mr.Close()
-		ep.Close()
+		_ = ep.Close()
 		return nil, nil, err
 	}
 	ep.QP = qp
@@ -121,7 +121,7 @@ func SetupTCP(cfg Config) (*Endpoint, *gordma.MR, error) {
 	peer, err := ExchangeOverTCP(cfg, local)
 	if err != nil {
 		_ = mr.Close()
-		ep.Close()
+		_ = ep.Close()
 		return nil, nil, err
 	}
 	ep.Peer = &peer
@@ -133,7 +133,7 @@ func SetupTCP(cfg Config) (*Endpoint, *gordma.MR, error) {
 	if cfg.Transport == TransportUD {
 		if err := bringUpUD(qp, cfg.IBPort, localPSN); err != nil {
 			_ = mr.Close()
-			ep.Close()
+			_ = ep.Close()
 			return nil, nil, err
 		}
 		// Build the address handle to reach the peer on UD.
@@ -147,7 +147,7 @@ func SetupTCP(cfg Config) (*Endpoint, *gordma.MR, error) {
 		})
 		if err != nil {
 			_ = mr.Close()
-			ep.Close()
+			_ = ep.Close()
 			return nil, nil, err
 		}
 		ep.udAH = ah
@@ -166,7 +166,7 @@ func SetupTCP(cfg Config) (*Endpoint, *gordma.MR, error) {
 		}
 		if err := bringUpRC(qp, cfg.IBPort, conn); err != nil {
 			_ = mr.Close()
-			ep.Close()
+			_ = ep.Close()
 			return nil, nil, err
 		}
 	}
@@ -211,7 +211,7 @@ func SetupTCPOrCM(cfg Config) (*Endpoint, *gordma.MR, error) {
 	}
 	mr, err := ep.PD.RegMRBuffer(cfg.Size, defaultMRAccess)
 	if err != nil {
-		ep.Close()
+		_ = ep.Close()
 		return nil, nil, err
 	}
 	return ep, mr, nil

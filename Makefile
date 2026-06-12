@@ -59,6 +59,17 @@ fmt-check: ## Fail if any Go source is not gofmt-clean
 		echo "gofmt needed on:"; echo "$$unformatted"; exit 1; \
 	fi
 
+.PHONY: lint
+lint: ## Run golangci-lint (install if missing); falls back to go vet
+	@if command -v golangci-lint >/dev/null 2>&1; then \
+		golangci-lint run ./...; \
+	else \
+		echo "golangci-lint not found; install with:"; \
+		echo "  go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest"; \
+		echo "running 'go vet' as a fallback for now"; \
+		$(GO) vet ./...; \
+	fi
+
 .PHONY: stub
 stub: ## Build the stub (CGO_ENABLED=0) on the host platform
 	CGO_ENABLED=0 $(GO) build $(GOFLAGS) ./...

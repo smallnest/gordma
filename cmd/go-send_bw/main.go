@@ -29,8 +29,8 @@ func run(cfg perftest.Config) error {
 	if err != nil {
 		return err
 	}
-	defer ep.Close()
-	defer mr.Close()
+	defer func() { _ = ep.Close() }()
+	defer func() { _ = mr.Close() }()
 
 	res, err := perftest.RunSendBW(cfg, ep, mr)
 	if err != nil {
