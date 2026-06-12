@@ -5,6 +5,8 @@ package gordma
 /*
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
+#include <arpa/inet.h>
 #include <infiniband/verbs.h>
 
 // post_send_one posts a single send WR. The SGE array is supplied by the
@@ -23,7 +25,8 @@ static int post_send_one(struct ibv_qp *qp, uint64_t wr_id, int opcode,
 	wr.sg_list = sg;
 	wr.num_sge = num_sge;
 	wr.send_flags = send_flags;
-	wr.imm_data = imm_data;
+	// imm_data is __be32 on the wire; convert from host order.
+	wr.imm_data = htonl(imm_data);
 
 	switch (opcode) {
 	case 0: wr.opcode = IBV_WR_SEND; break;

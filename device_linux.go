@@ -18,6 +18,15 @@ static int mtu_to_bytes(enum ibv_mtu m) {
 	default: return 0;
 	}
 }
+
+// gordma_query_port wraps ibv_query_port so the static-inline in modern
+// rdma-core's verbs.h (which forwards to ___ibv_query_port expecting a
+// _compat_ibv_port_attr*) is expanded here in C. Calling ibv_query_port
+// directly from cgo binds the underlying symbol and trips a type mismatch.
+static int gordma_query_port(struct ibv_context *ctx, uint8_t port,
+                             struct ibv_port_attr *attr) {
+	return ibv_query_port(ctx, port, attr);
+}
 */
 import "C"
 
@@ -141,7 +150,7 @@ func (c *Context) QueryPort(port int) (PortAttr, error) {
 		return PortAttr{}, ErrClosed
 	}
 	var a C.struct_ibv_port_attr
-	if rc := C.ibv_query_port(c.ctx, C.uint8_t(port), &a); rc != 0 {
+	if rc := C.gordma_query_port(c.ctx, C.uint8_t(port), &a); rc != 0 {
 		return PortAttr{}, fmt.Errorf("gordma: ibv_query_port(%d) failed: %w", port, errnoFromRC(rc))
 	}
 	link := "Unknown"
