@@ -1,5 +1,10 @@
 # gordma
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/smallnest/gordma.svg)](https://pkg.go.dev/github.com/smallnest/gordma)
+[![CI](https://github.com/smallnest/gordma/actions/workflows/ci.yml/badge.svg)](https://github.com/smallnest/gordma/actions/workflows/ci.yml)
+[![Go Version](https://img.shields.io/badge/Go-%3E%3D1.26-blue)](https://go.dev/)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 Idiomatic Go bindings for RDMA — a cgo wrapper around **libibverbs** and
 **librdmacm** (the user-space libraries from
 [rdma-core](https://github.com/linux-rdma/rdma-core)), plus perftest-style
