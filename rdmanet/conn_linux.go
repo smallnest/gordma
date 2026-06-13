@@ -68,11 +68,8 @@ type Listener struct {
 	addr string
 }
 
-// PacketConn is an unreliable-datagram (UD) RDMA endpoint. Implemented by the
-// UD issue (#39); the skeleton keeps it inert here.
-type PacketConn struct {
-	cfg config
-}
+// PacketConn is an unreliable-datagram (UD) RDMA endpoint. Its implementation
+// lives in packet_linux.go.
 
 // Dial establishes an RC connection to addr ("host:port") using the default
 // DefaultDialTimeout. Connection is made via the RDMA connection manager
@@ -324,24 +321,8 @@ func (c *Conn) RemoteAddr() string {
 	return c.remoteAddr
 }
 
-// ListenPacket creates a UD datagram endpoint bound to addr. (Issue #39.)
-func ListenPacket(addr string, opts ...Option) (*PacketConn, error) {
-	_ = applyOptions(opts)
-	return nil, errNotImplemented
-}
+// ListenPacket creates a UD datagram endpoint bound to addr. Implementation in
+// packet_linux.go.
 
-// ReadFrom reads a datagram and reports the sender's address. (Issue #39.)
-func (p *PacketConn) ReadFrom(b []byte) (int, *Addr, error) {
-	return 0, nil, errNotImplemented
-}
-
-// WriteTo writes a datagram to the given address. (Issue #39.)
-func (p *PacketConn) WriteTo(b []byte, to *Addr) (int, error) {
-	return 0, errNotImplemented
-}
-
-// Close releases the datagram endpoint. (Issue #39.)
-func (p *PacketConn) Close() error { return errNotImplemented }
-
-// LocalAddr returns the local UD address. (Issue #39.)
-func (p *PacketConn) LocalAddr() *Addr { return nil }
+// (ReadFrom/WriteTo/Close/LocalAddr for PacketConn are defined in
+// packet_linux.go.)
