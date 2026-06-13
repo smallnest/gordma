@@ -47,6 +47,11 @@ type Conn struct {
 	trOnce sync.Once
 	tr     *transport
 	trErr  error
+
+	// readMu serializes Read and guards reader, the byte-stream adapter over the
+	// message transport (buffers the leftover of an oversized message).
+	readMu sync.Mutex
+	reader *streamReader
 }
 
 // Listener accepts incoming RC connections established via rdma_cm, or via the
@@ -203,11 +208,47 @@ func (c *Conn) RecvMsgBuf(p []byte) (int, error) {
 	return tr.recvMsgBuf(p)
 }
 
-// Read implements io.Reader over the message stream. (Issue #37.)
-func (c *Conn) Read(p []byte) (int, error) { return 0, errNotImplemented }
+// Read implements io.Reader over the message stream: it returns bytes from the
+// received messages, transparently spanning message boundaries. A single Read
+// returns at most one message's worth of remaining bytes; leftover bytes from a
+// message larger than p are buffered and returned by subsequent Reads.
+//
+// Mixing Read with RecvMsg/RecvMsgBuf on the same Conn is not supported: the
+// stream reader may have buffered part of a message that a subsequent RecvMsg
+// would not see. Pick one receive style per Conn.
+func (c *Conn) Read(p []byte) (int, error) {
+	tr, err := c.transport()
+	if err != nil {
+		return 0, err
+	}
+	if len(p) == 0 {
+		return 0, nil
+	}
+	c.readMu.Lock()
+	defer c.readMu.Unlock()
+	if c.reader == nil {
+		c.reader = &streamReader{recv: tr.recvMsg}
+	}
+	return c.reader.read(p)
+}
 
-// Write implements io.Writer over the message stream. (Issue #37.)
-func (c *Conn) Write(p []byte) (int, error) { return 0, errNotImplemented }
+// Write implements io.Writer over the message stream: it sends p as one message
+// and reports it fully written, or returns an error. Per io.Writer semantics, a
+// nil error means all len(p) bytes were written.
+//
+// Mixing Write with SendMsg on the same Conn is allowed (each Write is one
+// SendMsg), but note that a reader using Read will see Write's payload spliced
+// into the byte stream with no boundary.
+func (c *Conn) Write(p []byte) (int, error) {
+	tr, err := c.transport()
+	if err != nil {
+		return 0, err
+	}
+	if err := tr.sendMsg(p); err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
 
 // Close releases the connection's QP/CQ/PD and CM resources. For the handshake
 // path it releases the directly-owned verbs resources in order
