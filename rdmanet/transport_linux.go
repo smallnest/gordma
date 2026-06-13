@@ -46,6 +46,7 @@ const maxMessageBytes = 64 << 20
 type transport struct {
 	qp       *gordma.QP
 	cq       *gordma.CQ
+	pollMode PollMode
 	slotSize int // bytes per bounce slot (header + payload)
 	payload  int // usable payload per frame = slotSize - frameHeaderSize
 	depth    int
@@ -88,8 +89,8 @@ type recvFrame struct {
 // newTransport registers the send/recv rings, posts the initial recv WRs, and
 // prepares flow-control state. depth data slots + a few credit slots are
 // reserved on the send side; depth slots on the recv side. The poller starts on
-// first send/recv.
-func newTransport(pd *gordma.PD, qp *gordma.QP, cq *gordma.CQ, slotSize, depth int) (*transport, error) {
+// first send/recv. pollMode selects busy-poll vs. completion-event draining.
+func newTransport(pd *gordma.PD, qp *gordma.QP, cq *gordma.CQ, slotSize, depth int, pollMode PollMode) (*transport, error) {
 	if slotSize <= frameHeaderSize || depth <= 0 {
 		return nil, fmt.Errorf("rdmanet: invalid transport sizing slot=%d depth=%d", slotSize, depth)
 	}
@@ -107,6 +108,7 @@ func newTransport(pd *gordma.PD, qp *gordma.QP, cq *gordma.CQ, slotSize, depth i
 	t := &transport{
 		qp:             qp,
 		cq:             cq,
+		pollMode:       pollMode,
 		slotSize:       slotSize,
 		payload:        slotSize - frameHeaderSize,
 		depth:          depth,
@@ -155,6 +157,11 @@ func (t *transport) startPoller() {
 // a data slot and signal sendDone; credit-SEND completions just free a credit
 // slot. Inbound credit frames release flow-control credits and immediately
 // repost their recv slot; inbound data frames are enqueued for reassembly.
+//
+// In PollBusy mode it spins on Poll (yielding on empty polls). In PollEvent
+// mode it arms the CQ and blocks on the completion channel between drains,
+// trading a little latency for far lower CPU. Both modes feed the identical
+// dispatch loop (dispatch).
 func (t *transport) poll() {
 	wc := make([]gordma.WorkCompletion, t.depth)
 	for {
@@ -163,81 +170,118 @@ func (t *transport) poll() {
 			return
 		default:
 		}
-		n, err := t.cq.Poll(wc)
+		if t.pollMode == PollEvent {
+			// Arm for the next notification, then drain everything currently
+			// ready. Re-arm/Poll ordering (arm before drain) avoids missing a
+			// completion that lands between drain and arm. If no completion
+			// channel is bound (e.g. an rdma_cm-created CQ), event mode is
+			// impossible — fall back to busy-poll permanently.
+			if err := t.cq.ReqNotify(false); err != nil {
+				if errors.Is(err, gordma.ErrNoChannel) {
+					t.pollMode = PollBusy
+					continue
+				}
+				t.fail(err)
+				return
+			}
+			// Drain whatever is already ready before blocking.
+			drained, err := t.drainOnce(wc)
+			if err != nil {
+				t.fail(err)
+				return
+			}
+			if drained == 0 {
+				if err := t.cq.WaitEvent(); err != nil {
+					if errors.Is(err, gordma.ErrNoChannel) {
+						t.pollMode = PollBusy
+						continue
+					}
+					// WaitEvent fails when the channel is torn down on Close.
+					select {
+					case <-t.closed:
+						return
+					default:
+					}
+					t.fail(err)
+					return
+				}
+			}
+			continue
+		}
+		// PollBusy
+		n, err := t.drainOnce(wc)
 		if err != nil {
 			t.fail(err)
 			return
 		}
 		if n == 0 {
 			runtime.Gosched()
-			continue
-		}
-		for i := 0; i < n; i++ {
-			c := &wc[i]
-			if !c.Status.OK() {
-				t.fail(&gordma.CompletionError{Status: c.Status, WRID: c.WRID})
-				return
-			}
-			switch c.Opcode {
-			case gordma.WCSend:
-				if c.WRID >= bufferWRIDBase {
-					// Zero-copy Buffer SEND completed.
-					select {
-					case t.bufDone <- struct{}{}:
-					case <-t.closed:
-						return
-					}
-					continue
-				}
-				if c.WRID >= creditWRIDBase {
-					// Credit-return SEND completed: free its slot.
-					select {
-					case t.creditFree <- int(c.WRID-creditWRIDBase) + t.creditSlotBase:
-					case <-t.closed:
-						return
-					}
-					continue
-				}
-				select {
-				case t.sendDone <- struct{}{}:
-				case <-t.closed:
-					return
-				}
-			case gordma.WCRecv:
-				slot := int(c.WRID)
-				hdr, derr := decodeHeader(t.recvBuf[slot*t.slotSize:])
-				if derr != nil {
-					t.fail(derr)
-					return
-				}
-				if hdr.isCredit() {
-					// Peer returned credits; repost the slot immediately.
-					t.credits.release(int(hdr.value))
-					if rerr := t.postRecv(slot); rerr != nil {
-						t.fail(rerr)
-						return
-					}
-					continue
-				}
-				if hdr.isFin() {
-					// Peer closed gracefully: signal EOF after queued frames
-					// drain, then repost the slot.
-					t.finOnce.Do(func() { close(t.peerFin) })
-					if rerr := t.postRecv(slot); rerr != nil {
-						t.fail(rerr)
-						return
-					}
-					continue
-				}
-				fr := recvFrame{slot: slot, hdr: hdr, n: int(hdr.value)}
-				select {
-				case t.recvQ <- fr:
-				case <-t.closed:
-					return
-				}
-			}
 		}
 	}
+}
+
+// drainOnce polls the CQ once and dispatches every completion in the batch. It
+// returns the number of completions handled, or an error to fail on.
+func (t *transport) drainOnce(wc []gordma.WorkCompletion) (int, error) {
+	n, err := t.cq.Poll(wc)
+	if err != nil {
+		return 0, err
+	}
+	for i := 0; i < n; i++ {
+		if err := t.dispatch(&wc[i]); err != nil {
+			return n, err
+		}
+	}
+	return n, nil
+}
+
+// dispatch routes a single completion. It returns an error only for a failed
+// completion or a fatal post error; channel-send blocking respects t.closed.
+func (t *transport) dispatch(c *gordma.WorkCompletion) error {
+	if !c.Status.OK() {
+		return &gordma.CompletionError{Status: c.Status, WRID: c.WRID}
+	}
+	switch c.Opcode {
+	case gordma.WCSend:
+		if c.WRID >= bufferWRIDBase {
+			select {
+			case t.bufDone <- struct{}{}:
+			case <-t.closed:
+			}
+			return nil
+		}
+		if c.WRID >= creditWRIDBase {
+			select {
+			case t.creditFree <- int(c.WRID-creditWRIDBase) + t.creditSlotBase:
+			case <-t.closed:
+			}
+			return nil
+		}
+		select {
+		case t.sendDone <- struct{}{}:
+		case <-t.closed:
+		}
+	case gordma.WCRecv:
+		slot := int(c.WRID)
+		hdr, derr := decodeHeader(t.recvBuf[slot*t.slotSize:])
+		if derr != nil {
+			return derr
+		}
+		if hdr.isCredit() {
+			t.credits.release(int(hdr.value))
+			return t.postRecv(slot)
+		}
+		if hdr.isFin() {
+			t.finOnce.Do(func() { close(t.peerFin) })
+			return t.postRecv(slot)
+		}
+		fr := recvFrame{slot: slot, hdr: hdr, n: int(hdr.value)}
+		select {
+		case t.recvQ <- fr:
+		case <-t.closed:
+		}
+	}
+	return nil
 }
 
 func (t *transport) fail(err error) {

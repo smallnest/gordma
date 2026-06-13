@@ -32,12 +32,13 @@ type Conn struct {
 	// handshake ownership: when cm == nil, these are owned directly and closed
 	// in order on Close. peer carries the exchanged remote endpoint info that
 	// the data path (issue #35) needs to target the peer.
-	ctx  *gordma.Context
-	pd   *gordma.PD
-	cq   *gordma.CQ
-	qp   *gordma.QP
-	mr   *gordma.MR
-	peer *handshake.EndpointInfo
+	ctx    *gordma.Context
+	pd     *gordma.PD
+	cq     *gordma.CQ
+	qp     *gordma.QP
+	mr     *gordma.MR
+	compCh *gordma.CompChannel
+	peer   *handshake.EndpointInfo
 
 	localAddr  string
 	remoteAddr string
@@ -176,7 +177,7 @@ func (c *Conn) transport() (*transport, error) {
 			c.trErr = gordma.ErrClosed
 			return
 		}
-		c.tr, c.trErr = newTransport(pd, qp, cq, c.cfg.bufferSize, c.cfg.queueDepth)
+		c.tr, c.trErr = newTransport(pd, qp, cq, c.cfg.bufferSize, c.cfg.queueDepth, c.cfg.pollMode)
 	})
 	return c.tr, c.trErr
 }
@@ -315,6 +316,10 @@ func (c *Conn) Close() error {
 		if c.cq != nil {
 			_ = c.cq.Close()
 			c.cq = nil
+		}
+		if c.compCh != nil {
+			_ = c.compCh.Close()
+			c.compCh = nil
 		}
 		if c.pd != nil {
 			_ = c.pd.Close()

@@ -111,7 +111,19 @@ func buildHandshakeConn(cfg config) (*Conn, handshake.EndpointInfo, error) {
 	}
 	c.pd = pd
 
-	cq, err := ctx.CreateCQ(cfg.queueDepth*2+1, nil)
+	// For event-mode polling the CQ must be bound to a completion channel;
+	// busy-mode uses a plain CQ. The channel is owned by the Context and is
+	// released when the Context closes.
+	var ch *gordma.CompChannel
+	if cfg.pollMode == PollEvent {
+		ch, err = ctx.CreateCompChannel()
+		if err != nil {
+			_ = c.Close()
+			return nil, zero, err
+		}
+		c.compCh = ch
+	}
+	cq, err := ctx.CreateCQ(cfg.queueDepth*2+1, ch)
 	if err != nil {
 		_ = c.Close()
 		return nil, zero, err
