@@ -104,4 +104,32 @@ func TestNilListenerAccept(t *testing.T) {
 	}
 }
 
+// TestConnCloseIdempotentAndFailsFast verifies Close is idempotent and that
+// after Close the send/recv methods fail fast with gordma.ErrClosed (no
+// hardware needed: the closed flag short-circuits transport()).
+func TestConnCloseIdempotentAndFailsFast(t *testing.T) {
+	c := &Conn{} // no cm, no verbs resources — Close just flips state
+	if err := c.Close(); err != nil {
+		t.Fatalf("first Close: %v", err)
+	}
+	if err := c.Close(); err != nil {
+		t.Errorf("second Close (idempotent): %v", err)
+	}
+	if !c.isClosed() {
+		t.Error("isClosed() false after Close")
+	}
+	if err := c.SendMsg([]byte("x")); !errors.Is(err, gordma.ErrClosed) {
+		t.Errorf("SendMsg after Close: want ErrClosed, got %v", err)
+	}
+	if _, err := c.RecvMsg(); !errors.Is(err, gordma.ErrClosed) {
+		t.Errorf("RecvMsg after Close: want ErrClosed, got %v", err)
+	}
+	if _, err := c.Read(make([]byte, 4)); !errors.Is(err, gordma.ErrClosed) {
+		t.Errorf("Read after Close: want ErrClosed, got %v", err)
+	}
+	if _, err := c.Write([]byte("x")); !errors.Is(err, gordma.ErrClosed) {
+		t.Errorf("Write after Close: want ErrClosed, got %v", err)
+	}
+}
+
 var _ = time.Second

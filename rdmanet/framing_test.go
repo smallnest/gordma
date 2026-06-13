@@ -38,6 +38,21 @@ func TestDecodeHeaderShort(t *testing.T) {
 	}
 }
 
+func TestFrameHeaderFinFlag(t *testing.T) {
+	buf := make([]byte, frameHeaderSize)
+	frameHeader{flags: flagFin}.encode(buf)
+	h, err := decodeHeader(buf)
+	if err != nil {
+		t.Fatalf("decodeHeader: %v", err)
+	}
+	if !h.isFin() {
+		t.Error("isFin: want true for flagFin header")
+	}
+	if h.isCredit() || h.hasMore() {
+		t.Error("FIN header must not also be credit/more")
+	}
+}
+
 func TestFragmentCount(t *testing.T) {
 	cases := []struct{ msg, chunk, want int }{
 		{0, 100, 1}, // empty message still takes one frame for the boundary
