@@ -59,6 +59,15 @@ func TestStubReturnsNotSupported(t *testing.T) {
 	if _, err := c.RecvBatch(4); !errors.Is(err, gordma.ErrNotSupported) {
 		t.Errorf("Conn.RecvBatch: want ErrNotSupported, got %v", err)
 	}
+	if _, err := c.AllocBuffer(64); !errors.Is(err, gordma.ErrNotSupported) {
+		t.Errorf("Conn.AllocBuffer: want ErrNotSupported, got %v", err)
+	}
+	if err := c.SendBuffer(&Buffer{}); !errors.Is(err, gordma.ErrNotSupported) {
+		t.Errorf("Conn.SendBuffer: want ErrNotSupported, got %v", err)
+	}
+	if _, err := c.RecvBuffer(); !errors.Is(err, gordma.ErrNotSupported) {
+		t.Errorf("Conn.RecvBuffer: want ErrNotSupported, got %v", err)
+	}
 
 	pc := &PacketConn{}
 	if _, _, err := pc.ReadFrom(make([]byte, 4)); !errors.Is(err, gordma.ErrNotSupported) {
