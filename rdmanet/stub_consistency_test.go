@@ -53,6 +53,12 @@ func TestStubReturnsNotSupported(t *testing.T) {
 	if _, err := c.Write([]byte("x")); !errors.Is(err, gordma.ErrNotSupported) {
 		t.Errorf("Conn.Write: want ErrNotSupported, got %v", err)
 	}
+	if err := c.SendBatch([][]byte{{1}}); !errors.Is(err, gordma.ErrNotSupported) {
+		t.Errorf("Conn.SendBatch: want ErrNotSupported, got %v", err)
+	}
+	if _, err := c.RecvBatch(4); !errors.Is(err, gordma.ErrNotSupported) {
+		t.Errorf("Conn.RecvBatch: want ErrNotSupported, got %v", err)
+	}
 
 	pc := &PacketConn{}
 	if _, _, err := pc.ReadFrom(make([]byte, 4)); !errors.Is(err, gordma.ErrNotSupported) {
@@ -60,5 +66,11 @@ func TestStubReturnsNotSupported(t *testing.T) {
 	}
 	if _, err := pc.WriteTo([]byte("x"), &Addr{}); !errors.Is(err, gordma.ErrNotSupported) {
 		t.Errorf("PacketConn.WriteTo: want ErrNotSupported, got %v", err)
+	}
+	if _, err := pc.WriteToBatch([][]byte{{1}}, &Addr{}); !errors.Is(err, gordma.ErrNotSupported) {
+		t.Errorf("PacketConn.WriteToBatch: want ErrNotSupported, got %v", err)
+	}
+	if _, _, err := pc.ReadFromBatch(4); !errors.Is(err, gordma.ErrNotSupported) {
+		t.Errorf("PacketConn.ReadFromBatch: want ErrNotSupported, got %v", err)
 	}
 }

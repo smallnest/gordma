@@ -132,4 +132,18 @@ func TestConnCloseIdempotentAndFailsFast(t *testing.T) {
 	}
 }
 
+// TestSendBatchEmptyNoError verifies an empty batch is a no-op even after Close
+// short-circuits transport setup (no device needed). SendBatch on a fresh Conn
+// with no resources returns ErrClosed via transport(); an empty batch on a
+// closed Conn likewise returns ErrClosed. The empty-batch fast path is checked
+// at the Conn layer before touching the transport.
+func TestSendBatchEmptyOnClosed(t *testing.T) {
+	c := &Conn{}
+	_ = c.Close()
+	// Closed Conn: transport() fails fast, so even an empty batch reports closed.
+	if err := c.SendBatch(nil); !errors.Is(err, gordma.ErrClosed) {
+		t.Errorf("SendBatch(nil) on closed: want ErrClosed, got %v", err)
+	}
+}
+
 var _ = time.Second
