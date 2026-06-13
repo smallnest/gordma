@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Implementation Notes — Issue #0033</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #FAF9F6; color: #1a1a1a; padding: 2.5rem 2rem; line-height: 1.7; }
+    .container { max-width: 800px; margin: 0 auto; }
+    h1 { font-size: 1.375rem; font-weight: 700; margin-bottom: 0.25rem; }
+    .meta { color: #8B8680; font-size: 0.8125rem; margin-bottom: 2rem; }
+    h2 { font-size: 1rem; font-weight: 600; margin-top: 2rem; margin-bottom: 0.75rem; padding-bottom: 0.375rem; border-bottom: 1px solid #E8E4DE; display: flex; align-items: center; gap: 0.5rem; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+    .dot.design { background: #5B8A72; } .dot.deviation { background: #D97757; } .dot.tradeoff { background: #4A6FA5; } .dot.question { background: #D4A843; }
+    .item { background: #FFFFFF; border: 1px solid #E8E4DE; border-radius: 8px; padding: 1rem 1.25rem; margin-bottom: 0.75rem; box-shadow: 0 1px 3px rgba(0,0,0,0.03); }
+    .item h3 { font-size: 0.875rem; font-weight: 600; margin-bottom: 0.375rem; }
+    .item p { font-size: 0.8125rem; color: #4A4540; margin-bottom: 0.375rem; }
+    .label { display: inline-block; font-size: 0.6875rem; font-weight: 500; padding: 0.125rem 0.5rem; border-radius: 4px; margin-right: 0.375rem; }
+    .label-design { background: #F5F8F6; color: #5B8A72; border: 1px solid #5B8A72; }
+    .label-deviation { background: #FFF5F0; color: #D97757; border: 1px solid #D97757; }
+    .label-tradeoff { background: #F0F4F8; color: #4A6FA5; border: 1px solid #4A6FA5; }
+    .label-question { background: #FDF8F0; color: #D4A843; border: 1px solid #D4A843; }
+    .none { color: #B0AAA4; font-style: italic; font-size: 0.8125rem; }
+    code { background: #F0EEE9; padding: 0.05rem 0.3rem; border-radius: 3px; font-size: 0.78rem; }
+    .footer { text-align: center; margin-top: 2.5rem; color: #B0AAA4; font-size: 0.6875rem; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Implementation Notes</h1>
+    <p class="meta">Issue <a href="https://github.com/smallnest/gordma/issues/33">#33</a> &mdash; rdmanet: rdma_cm 方式 Dial/Listen &mdash; 2026-06-13</p>
+
+    <h2><span class="dot design"></span> Design Decisions</h2>
+    <div class="item">
+      <h3><span class="label label-design">Decision</span> Wrap gordma.CMConn rather than reimplement rdma_cm</h3>
+      <p><strong>Ambiguity:</strong> "复用根包 rdma_cm 路径" — the Issue says reuse but not at what layer.</p>
+      <p><strong>Choice:</strong> <code>Conn</code> holds a <code>*gordma.CMConn</code>; Dial/Listen delegate to <code>gordma.Dial</code>/<code>gordma.Listen</code>, and rdmanet only adds the net-style address tracking and option plumbing on top.</p>
+      <p><strong>Rationale:</strong> The root wrapper already brings the QP to RTS and owns PD/CQ/QP lifecycle; re-deriving that would duplicate cgo code and violate FR-16 (no root-package changes).</p>
+    </div>
+    <div class="item">
+      <h3><span class="label label-design">Decision</span> DialTimeout is the primitive; Dial delegates to it</h3>
+      <p><strong>Ambiguity:</strong> Issue lists both Dial and DialTimeout without specifying their relationship.</p>
+      <p><strong>Choice:</strong> <code>Dial</code> calls <code>DialTimeout(addr, DefaultDialTimeout, opts...)</code>; a non-positive timeout falls back to the default.</p>
+      <p><strong>Rationale:</strong> Single code path for establishment; mirrors net.Dial/net.DialTimeout familiarity.</p>
+    </div>
+
+    <h2><span class="dot deviation"></span> Deviations</h2>
+    <div class="item">
+      <h3><span class="label label-deviation">Deviation</span> LocalAddr/RemoteAddr are partially populated</h3>
+      <p><strong>Spec:</strong> "返回有意义的地址（IP:port 语义）".</p>
+      <p><strong>Implemented:</strong> Dialed Conn records the dial target as RemoteAddr; accepted Conn records the listener bind address as LocalAddr. The opposite side is empty.</p>
+      <p><strong>Why:</strong> The root <code>gordma.CMConn</code> does not expose the resolved peer/local sockaddr, and exposing it would require modifying the root package (forbidden by FR-16). The addresses we do have are meaningful IP:port values; the rest is left for a future root-package enhancement (see Open Questions).</p>
+    </div>
+
+    <h2><span class="dot tradeoff"></span> Tradeoffs</h2>
+    <div class="item">
+      <h3><span class="label label-tradeoff">Tradeoff</span> WithHandshake returns not-implemented vs. silently using rdma_cm</h3>
+      <p><strong>Alternatives:</strong> (a) ignore WithHandshake for now and always use rdma_cm; (b) return <code>errNotImplemented</code> when WithHandshake is set.</p>
+      <p><strong>Pros/cons:</strong> (a) "works" but silently does the wrong thing, hiding a missing feature; (b) explicit and safe, surfaces the gap until #34 lands.</p>
+      <p><strong>Chosen:</strong> (b) — failing loudly on an unimplemented option is safer than a silent semantic mismatch.</p>
+    </div>
+
+    <h2><span class="dot question"></span> Open Questions</h2>
+    <div class="item">
+      <h3><span class="label label-question">Question</span> Should the root package expose CMConn peer/local addresses?</h3>
+      <p><strong>Assumption:</strong> Full IP:port on both sides is not required for this Issue's acceptance.</p>
+      <p><strong>Verify:</strong> If symmetric LocalAddr/RemoteAddr is desired, a small root-package addition (storing the resolved sockaddr on CMConn) would let rdmanet populate both — worth a follow-up Issue.</p>
+    </div>
+    <div class="item">
+      <h3><span class="label label-question">Question</span> rdma_cm path only build-verified, not run</h3>
+      <p><strong>Assumption:</strong> <code>conn_linux.go</code>'s rdma_cm delegation is correct; verified by stub cross-build and the negative Linux tests (which Skip when a device is present).</p>
+      <p><strong>Verify:</strong> A real two-node RDMA run (or CI on an RDMA runner) is needed to confirm end-to-end establishment; covered conceptually by #44's bench tool.</p>
+    </div>
+
+    <p class="footer">Generated by goal-workflow /note-it</p>
+  </div>
+</body>
+</html>
