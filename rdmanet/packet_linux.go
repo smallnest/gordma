@@ -336,6 +336,103 @@ func (pc *PacketConn) ReadFrom(b []byte) (int, *Addr, error) {
 	}
 }
 
+// WriteToBatch sends each datagram in bs to to, returning the number fully
+// sent and the first error encountered. It holds sendMu for the whole batch to
+// amortize lock overhead; semantically equivalent to repeated WriteTo.
+func (pc *PacketConn) WriteToBatch(bs [][]byte, to *Addr) (int, error) {
+	if to == nil {
+		return 0, fmt.Errorf("rdmanet: WriteToBatch nil address")
+	}
+	for i, b := range bs {
+		if _, err := pc.WriteTo(b, to); err != nil {
+			return i, err
+		}
+	}
+	return len(bs), nil
+}
+
+// ReadFromBatch reads up to max datagrams into freshly allocated buffers. It
+// blocks for the first datagram, then collects any further datagrams already
+// completed without blocking, returning 1..max. All datagrams in one call come
+// from the same sender is NOT guaranteed; each is paired with its own from
+// Addr. max <= 0 is treated as 1.
+func (pc *PacketConn) ReadFromBatch(max int) ([][]byte, []*Addr, error) {
+	if max <= 0 {
+		max = 1
+	}
+	buf := make([]byte, pc.mtu)
+	n, from, err := pc.ReadFrom(buf)
+	if err != nil {
+		return nil, nil, err
+	}
+	first := make([]byte, n)
+	copy(first, buf[:n])
+	msgs := [][]byte{first}
+	addrs := []*Addr{from}
+	for len(msgs) < max {
+		n, from, ok, err := pc.tryReadFrom(buf)
+		if err != nil {
+			return msgs, addrs, err
+		}
+		if !ok {
+			break
+		}
+		m := make([]byte, n)
+		copy(m, buf[:n])
+		msgs = append(msgs, m)
+		addrs = append(addrs, from)
+	}
+	return msgs, addrs, nil
+}
+
+// tryReadFrom does a single non-blocking poll for one datagram. It returns
+// (n, from, true, nil) when one was received, (0, nil, false, nil) when none is
+// immediately available, or an error. Caller must hold recvMu (ReadFromBatch
+// does not, since it relies on ReadFrom's own locking for the first datagram;
+// subsequent tries take recvMu here).
+func (pc *PacketConn) tryReadFrom(b []byte) (int, *Addr, bool, error) {
+	pc.recvMu.Lock()
+	defer pc.recvMu.Unlock()
+	wc := make([]gordma.WorkCompletion, pc.depth)
+	select {
+	case <-pc.closed:
+		return 0, nil, false, gordma.ErrClosed
+	default:
+	}
+	n, err := pc.cq.Poll(wc)
+	if err != nil {
+		return 0, nil, false, err
+	}
+	for i := 0; i < n; i++ {
+		c := &wc[i]
+		if c.Opcode != gordma.WCRecv {
+			continue
+		}
+		if !c.Status.OK() {
+			return 0, nil, false, &gordma.CompletionError{Status: c.Status, WRID: c.WRID}
+		}
+		slot := int(c.WRID)
+		off := slot*pc.recvSlotSize() + gordma.GRHLength
+		payloadLen := int(c.ByteLen) - gordma.GRHLength
+		if payloadLen < 0 {
+			payloadLen = 0
+		}
+		var nn int
+		var rerr error
+		if payloadLen > len(b) {
+			rerr = ErrShortBuffer
+		} else {
+			nn = copy(b, pc.recvBuf[off:off+payloadLen])
+		}
+		from := &Addr{QPN: c.SrcQP, QKey: DefaultQKey}
+		if perr := pc.postRecv(slot); perr != nil && rerr == nil {
+			rerr = perr
+		}
+		return nn, from, true, rerr
+	}
+	return 0, nil, false, nil
+}
+
 // LocalAddr returns this endpoint's UD address (GID/QPN/QKey) for out-of-band
 // distribution to peers.
 func (pc *PacketConn) LocalAddr() *Addr {

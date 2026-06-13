@@ -416,6 +416,91 @@ func (t *transport) recvMsg() ([]byte, error) {
 	return t.nextMessage()
 }
 
+// sendBatch sends each message in msgs in order, holding sendMu for the whole
+// batch so the frames are not interleaved with another sender's. It returns on
+// the first error. Semantically equivalent to calling sendMsg per message.
+func (t *transport) sendBatch(msgs [][]byte) error {
+	for _, m := range msgs {
+		if len(m) > maxMessageBytes {
+			return ErrMessageTooLarge
+		}
+	}
+	t.startPoller()
+	t.sendMu.Lock()
+	defer t.sendMu.Unlock()
+	for _, m := range msgs {
+		frames := fragmentCount(len(m), t.payload)
+		for f := 0; f < frames; f++ {
+			start := f * t.payload
+			end := start + t.payload
+			if end > len(m) {
+				end = len(m)
+			}
+			if err := t.sendFrame(m[start:end], f < frames-1); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// recvBatch returns up to max complete messages. It blocks for the first
+// message, then drains any additional messages already reassembled without
+// blocking, returning at least one message. max <= 0 is treated as 1.
+func (t *transport) recvBatch(max int) ([][]byte, error) {
+	if max <= 0 {
+		max = 1
+	}
+	t.startPoller()
+	t.recvMu.Lock()
+	defer t.recvMu.Unlock()
+
+	first, err := t.nextMessage()
+	if err != nil {
+		return nil, err
+	}
+	out := [][]byte{first}
+	for len(out) < max {
+		msg, ok, err := t.tryNextMessage()
+		if err != nil {
+			return out, err
+		}
+		if !ok {
+			break
+		}
+		out = append(out, msg)
+	}
+	return out, nil
+}
+
+// tryNextMessage attempts to reassemble one more complete message from frames
+// already queued, without blocking. It returns (msg, true, nil) when a message
+// completed, (nil, false, nil) when no more frames are immediately available,
+// or an error. Caller must hold recvMu.
+func (t *transport) tryNextMessage() ([]byte, bool, error) {
+	for {
+		select {
+		case fr := <-t.recvQ:
+			off := fr.slot*t.slotSize + frameHeaderSize
+			payload := t.recvBuf[off : off+fr.n]
+			msg, complete, aerr := t.reasm.add(payload, fr.hdr.hasMore())
+			if rerr := t.postRecv(fr.slot); rerr != nil {
+				return nil, false, rerr
+			}
+			t.returnCredit(1)
+			if aerr != nil {
+				return nil, false, aerr
+			}
+			if complete {
+				return msg, true, nil
+			}
+			// Partial: keep draining for the rest of this message.
+		default:
+			return nil, false, nil
+		}
+	}
+}
+
 // recvMsgBuf blocks until a full message arrives and copies it into p. If p is
 // too small the boundary is preserved and ErrShortBuffer is returned.
 func (t *transport) recvMsgBuf(p []byte) (int, error) {

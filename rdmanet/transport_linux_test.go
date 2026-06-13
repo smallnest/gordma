@@ -43,6 +43,16 @@ func TestSendMsgRejectsHugeMessage(t *testing.T) {
 	}
 }
 
+// TestSendBatchRejectsHugeMessage verifies the batch oversize guard runs before
+// any credit/slot work, so it needs no device.
+func TestSendBatchRejectsHugeMessage(t *testing.T) {
+	tr := &transport{payload: 8, depth: 1, closed: make(chan struct{}), credits: newCreditTracker(0)}
+	msgs := [][]byte{[]byte("ok"), make([]byte, maxMessageBytes+1)}
+	if err := tr.sendBatch(msgs); !errors.Is(err, ErrMessageTooLarge) {
+		t.Errorf("sendBatch oversized: want ErrMessageTooLarge, got %v", err)
+	}
+}
+
 // TestNextMessageEOFOnFin verifies the receive path returns io.EOF once a FIN
 // has been signalled and no buffered frames remain — without any RDMA device.
 func TestNextMessageEOFOnFin(t *testing.T) {

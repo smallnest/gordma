@@ -57,6 +57,12 @@ func (c *Conn) RecvMsg() ([]byte, error) { return nil, gordma.ErrNotSupported }
 // RecvMsgBuf returns ErrNotSupported on the stub build.
 func (c *Conn) RecvMsgBuf(p []byte) (int, error) { return 0, gordma.ErrNotSupported }
 
+// SendBatch returns ErrNotSupported on the stub build.
+func (c *Conn) SendBatch(msgs [][]byte) error { return gordma.ErrNotSupported }
+
+// RecvBatch returns ErrNotSupported on the stub build.
+func (c *Conn) RecvBatch(max int) ([][]byte, error) { return nil, gordma.ErrNotSupported }
+
 // Read returns ErrNotSupported on the stub build.
 func (c *Conn) Read(p []byte) (int, error) { return 0, gordma.ErrNotSupported }
 
@@ -86,6 +92,16 @@ func (p *PacketConn) ReadFrom(b []byte) (int, *Addr, error) {
 // WriteTo returns ErrNotSupported on the stub build.
 func (p *PacketConn) WriteTo(b []byte, to *Addr) (int, error) {
 	return 0, gordma.ErrNotSupported
+}
+
+// WriteToBatch returns ErrNotSupported on the stub build.
+func (p *PacketConn) WriteToBatch(bs [][]byte, to *Addr) (int, error) {
+	return 0, gordma.ErrNotSupported
+}
+
+// ReadFromBatch returns ErrNotSupported on the stub build.
+func (p *PacketConn) ReadFromBatch(max int) ([][]byte, []*Addr, error) {
+	return nil, nil, gordma.ErrNotSupported
 }
 
 // Close is a no-op on the stub build.

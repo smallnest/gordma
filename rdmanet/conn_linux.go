@@ -215,6 +215,33 @@ func (c *Conn) RecvMsgBuf(p []byte) (int, error) {
 	return tr.recvMsgBuf(p)
 }
 
+// SendBatch sends each message in msgs as a distinct boundary-preserving
+// message, posting the whole batch under one lock to amortize per-call
+// overhead. It returns on the first error. It is semantically equivalent to
+// calling SendMsg for each message and may be freely mixed with SendMsg.
+func (c *Conn) SendBatch(msgs [][]byte) error {
+	tr, err := c.transport()
+	if err != nil {
+		return err
+	}
+	if len(msgs) == 0 {
+		return nil
+	}
+	return tr.sendBatch(msgs)
+}
+
+// RecvBatch returns up to max complete messages. It blocks until at least one
+// message is available, then opportunistically collects any further messages
+// already received without blocking (so it returns 1..max messages). max <= 0
+// is treated as 1. It may be freely mixed with RecvMsg.
+func (c *Conn) RecvBatch(max int) ([][]byte, error) {
+	tr, err := c.transport()
+	if err != nil {
+		return nil, err
+	}
+	return tr.recvBatch(max)
+}
+
 // Read implements io.Reader over the message stream: it returns bytes from the
 // received messages, transparently spanning message boundaries. A single Read
 // returns at most one message's worth of remaining bytes; leftover bytes from a
