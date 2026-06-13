@@ -27,14 +27,33 @@ func TestDialNoDeviceFailsCleanly(t *testing.T) {
 	}
 }
 
-func TestDialHandshakeNotYetImplemented(t *testing.T) {
-	// WithHandshake path is delivered by issue #34; until then it reports
-	// not-implemented rather than silently using rdma_cm.
-	if _, err := Dial("127.0.0.1:1", WithHandshake()); !errors.Is(err, errNotImplemented) {
-		t.Errorf("Dial+WithHandshake: want errNotImplemented, got %v", err)
+func TestDialHandshakeNoDeviceFailsCleanly(t *testing.T) {
+	// The WithHandshake path now builds verbs resources before exchanging over
+	// TCP; without an RDMA device that build fails cleanly (not errNotImplemented,
+	// not a panic). We only assert it returns an error and no Conn.
+	c, err := Dial("127.0.0.1:1", WithHandshake())
+	if err == nil {
+		_ = c.Close()
+		t.Skip("Dial+WithHandshake unexpectedly succeeded (RDMA device present); skipping")
 	}
-	if _, err := Listen("127.0.0.1:0", WithHandshake()); !errors.Is(err, errNotImplemented) {
-		t.Errorf("Listen+WithHandshake: want errNotImplemented, got %v", err)
+	if errors.Is(err, errNotImplemented) {
+		t.Errorf("Dial+WithHandshake: handshake path should be implemented, got errNotImplemented")
+	}
+	if c != nil {
+		t.Errorf("Dial+WithHandshake: want nil Conn on error, got %v", c)
+	}
+}
+
+func TestListenHandshakeSucceedsWithoutDevice(t *testing.T) {
+	// The handshake listener is a pure TCP listener — it must succeed even with
+	// no RDMA device, since verbs resources are only built on Accept.
+	l, err := Listen("127.0.0.1:0", WithHandshake())
+	if err != nil {
+		t.Fatalf("Listen+WithHandshake: %v", err)
+	}
+	defer l.Close()
+	if l.Addr() != "127.0.0.1:0" {
+		t.Errorf("Addr: got %q", l.Addr())
 	}
 }
 

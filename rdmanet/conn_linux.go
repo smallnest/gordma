@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/smallnest/gordma"
+	"github.com/smallnest/gordma/handshake"
 )
 
 // errNotImplemented is returned by Linux entry points whose real RDMA
@@ -16,20 +17,36 @@ import (
 // methods remain stubbed until their issues land.
 var errNotImplemented = errors.New("rdmanet: not implemented yet")
 
-// Conn is a reliable-connected (RC) RDMA endpoint. It wraps the root package's
-// rdma_cm connection (gordma.CMConn) whose QP is already in RTS, and tracks the
-// local/remote addresses at this layer.
+// Conn is a reliable-connected (RC) RDMA endpoint. It is produced either by
+// the rdma_cm path (wrapping a gordma.CMConn whose QP is in RTS) or by the TCP
+// out-of-band handshake path (owning the verbs resources it created). Both
+// produce the same Conn type so callers are agnostic to how it was built.
 type Conn struct {
-	cfg        config
-	cm         *gordma.CMConn
+	cfg config
+
+	// rdma_cm ownership: when cm != nil, it owns PD/CQ/QP and is closed on Close.
+	cm *gordma.CMConn
+
+	// handshake ownership: when cm == nil, these are owned directly and closed
+	// in order on Close. peer carries the exchanged remote endpoint info that
+	// the data path (issue #35) needs to target the peer.
+	ctx  *gordma.Context
+	pd   *gordma.PD
+	cq   *gordma.CQ
+	qp   *gordma.QP
+	mr   *gordma.MR
+	peer *handshake.EndpointInfo
+
 	localAddr  string
 	remoteAddr string
 }
 
-// Listener accepts incoming RC connections established via rdma_cm.
+// Listener accepts incoming RC connections established via rdma_cm, or via the
+// TCP out-of-band handshake when WithHandshake was set.
 type Listener struct {
 	cfg  config
-	l    *gordma.Listener
+	l    *gordma.Listener  // rdma_cm path
+	hs   *handshake.Server // TCP handshake path
 	addr string
 }
 
@@ -50,12 +67,11 @@ func Dial(addr string, opts ...Option) (*Conn, error) {
 // back to DefaultDialTimeout.
 func DialTimeout(addr string, timeout time.Duration, opts ...Option) (*Conn, error) {
 	cfg := applyOptions(opts)
-	if cfg.handshake {
-		// TCP out-of-band handshake path is implemented in issue #34.
-		return nil, errNotImplemented
-	}
 	if timeout <= 0 {
 		timeout = DefaultDialTimeout
+	}
+	if cfg.handshake {
+		return dialHandshake(addr, timeout, cfg)
 	}
 	cm, err := gordma.Dial(addr, timeout)
 	if err != nil {
@@ -64,12 +80,16 @@ func DialTimeout(addr string, timeout time.Duration, opts ...Option) (*Conn, err
 	return &Conn{cfg: cfg, cm: cm, remoteAddr: addr}, nil
 }
 
-// Listen creates an RC listener bound to addr ("host:port") via rdma_cm.
+// Listen creates an RC listener bound to addr ("host:port") via rdma_cm, or via
+// the TCP out-of-band handshake when WithHandshake is set.
 func Listen(addr string, opts ...Option) (*Listener, error) {
 	cfg := applyOptions(opts)
 	if cfg.handshake {
-		// TCP out-of-band handshake path is implemented in issue #34.
-		return nil, errNotImplemented
+		hs, err := handshake.Listen(addr)
+		if err != nil {
+			return nil, err
+		}
+		return &Listener{cfg: cfg, hs: hs, addr: addr}, nil
 	}
 	l, err := gordma.Listen(addr)
 	if err != nil {
@@ -79,11 +99,15 @@ func Listen(addr string, opts ...Option) (*Listener, error) {
 }
 
 // Accept waits for and returns the next RC connection. The returned Conn's QP
-// is already in RTS. Its LocalAddr reflects the listener's bind address; the
-// peer address is not exposed by the underlying rdma_cm wrapper, so
-// RemoteAddr is empty for accepted connections.
+// is already in RTS.
 func (l *Listener) Accept() (*Conn, error) {
-	if l == nil || l.l == nil {
+	if l == nil {
+		return nil, gordma.ErrClosed
+	}
+	if l.hs != nil {
+		return acceptHandshake(l)
+	}
+	if l.l == nil {
 		return nil, gordma.ErrClosed
 	}
 	cm, err := l.l.Accept()
@@ -95,7 +119,13 @@ func (l *Listener) Accept() (*Conn, error) {
 
 // Close stops listening and releases the listener's resources.
 func (l *Listener) Close() error {
-	if l == nil || l.l == nil {
+	if l == nil {
+		return nil
+	}
+	if l.hs != nil {
+		return l.hs.Close()
+	}
+	if l.l == nil {
 		return nil
 	}
 	return l.l.Close()
@@ -124,12 +154,37 @@ func (c *Conn) Read(p []byte) (int, error) { return 0, errNotImplemented }
 // Write implements io.Writer over the message stream. (Issue #37.)
 func (c *Conn) Write(p []byte) (int, error) { return 0, errNotImplemented }
 
-// Close releases the connection's QP/CQ/PD and CM resources.
+// Close releases the connection's QP/CQ/PD and CM resources. For the handshake
+// path it releases the directly-owned verbs resources in order
+// (MR→QP→CQ→PD→Context).
 func (c *Conn) Close() error {
-	if c == nil || c.cm == nil {
+	if c == nil {
 		return nil
 	}
-	return c.cm.Close()
+	if c.cm != nil {
+		return c.cm.Close()
+	}
+	if c.mr != nil {
+		_ = c.mr.Close()
+		c.mr = nil
+	}
+	if c.qp != nil {
+		_ = c.qp.Close()
+		c.qp = nil
+	}
+	if c.cq != nil {
+		_ = c.cq.Close()
+		c.cq = nil
+	}
+	if c.pd != nil {
+		_ = c.pd.Close()
+		c.pd = nil
+	}
+	if c.ctx != nil {
+		_ = c.ctx.Close()
+		c.ctx = nil
+	}
+	return nil
 }
 
 // LocalAddr returns the local endpoint address ("host:port"). It is populated
