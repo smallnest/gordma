@@ -101,6 +101,38 @@ Two connection styles are available:
 - **rdma_cm** (`-R`): `gordma.Listen`/`gordma.Dial` return a `CMConn` whose QP
   is already in RTS.
 
+## High-level API (`rdmanet`)
+
+For a `net`-style experience that hides MR registration, work-request posting,
+CQ polling and flow control, use the `rdmanet` sub-package
+(`github.com/smallnest/gordma/rdmanet`). It offers RC `Conn` with message
+semantics (`SendMsg`/`RecvMsg`) plus a byte-stream adapter (`Read`/`Write`,
+`io.ReadWriteCloser`), and UD `PacketConn` (`ReadFrom`/`WriteTo`).
+
+```go
+// Server (RC, message semantics)
+ln, _ := rdmanet.Listen("0.0.0.0:18515")
+defer ln.Close()
+conn, _ := ln.Accept()
+defer conn.Close()
+msg, _ := conn.RecvMsg()      // one full message, boundary preserved
+
+// Client
+conn, _ := rdmanet.Dial("10.0.0.1:18515")
+defer conn.Close()
+_ = conn.SendMsg([]byte("hello"))
+```
+
+Connection establishment uses rdma_cm by default, or the TCP handshake with
+`rdmanet.WithHandshake()`. Other options: `WithDevice`, `WithPort`,
+`WithGIDIndex`, `WithQueueDepth`, `WithBufferSize`, and
+`WithPollMode(PollBusy|PollEvent)` (event-driven by default; busy-poll for
+lowest latency). Batch (`SendBatch`/`RecvBatch`), zero-copy
+(`AllocBuffer`/`SendBuffer`), and an optional UD address registry
+(`NewRegistry`/`LookupAddr`) are also provided. See `examples/` for runnable
+samples and the `go-rdmanet_bw`/`go-rdmanet_lat` tools for benchmarks.
+
+
 ## Tools
 
 Six perftest-style tools live under `cmd/` and mirror their C counterparts.
