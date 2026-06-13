@@ -63,6 +63,24 @@ func (c *Conn) SendBatch(msgs [][]byte) error { return gordma.ErrNotSupported }
 // RecvBatch returns ErrNotSupported on the stub build.
 func (c *Conn) RecvBatch(max int) ([][]byte, error) { return nil, gordma.ErrNotSupported }
 
+// Buffer is the stub zero-copy buffer. It holds no resources.
+type Buffer struct{}
+
+// Bytes returns nil on the stub build.
+func (b *Buffer) Bytes() []byte { return nil }
+
+// Close is a no-op on the stub build.
+func (b *Buffer) Close() error { return nil }
+
+// AllocBuffer returns ErrNotSupported on the stub build.
+func (c *Conn) AllocBuffer(size int) (*Buffer, error) { return nil, gordma.ErrNotSupported }
+
+// SendBuffer returns ErrNotSupported on the stub build.
+func (c *Conn) SendBuffer(b *Buffer) error { return gordma.ErrNotSupported }
+
+// RecvBuffer returns ErrNotSupported on the stub build.
+func (c *Conn) RecvBuffer() (*Buffer, error) { return nil, gordma.ErrNotSupported }
+
 // Read returns ErrNotSupported on the stub build.
 func (c *Conn) Read(p []byte) (int, error) { return 0, gordma.ErrNotSupported }
 

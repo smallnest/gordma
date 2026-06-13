@@ -26,8 +26,13 @@ var ErrShortBuffer = errors.New("rdmanet: buffer too small for message")
 
 // creditWRIDBase separates credit-return SEND completions from data-SEND
 // completions in the WRID space. Data sends use WRID = slot index in
-// [0, depth); credit sends use WRID >= creditWRIDBase.
+// [0, depth); credit sends use WRID in [creditWRIDBase, bufferWRIDBase);
+// zero-copy buffer sends use WRID >= bufferWRIDBase.
 const creditWRIDBase = 1 << 32
+
+// bufferWRIDBase marks zero-copy Buffer send completions. The low bits carry a
+// per-send token used to find the waiting SendBuffer caller.
+const bufferWRIDBase = 1 << 48
 
 // maxMessageBytes caps a single reassembled message (default 64 MiB) to bound
 // receiver memory against a misbehaving peer.
@@ -59,6 +64,7 @@ type transport struct {
 	recvQ      chan recvFrame // completed data frames awaiting reassembly
 	credits    *creditTracker // outstanding-frame flow control (peer recv depth)
 	reasm      *reassembler   // inbound fragment accumulator (recv path only)
+	bufDone    chan struct{}  // one token per completed zero-copy Buffer SEND
 
 	creditSlotBase int // first send-slot index reserved for credit frames
 
@@ -114,6 +120,7 @@ func newTransport(pd *gordma.PD, qp *gordma.QP, cq *gordma.CQ, slotSize, depth i
 		recvQ:          make(chan recvFrame, depth),
 		credits:        newCreditTracker(depth),
 		reasm:          newReassembler(maxMessageBytes),
+		bufDone:        make(chan struct{}, depth),
 		creditSlotBase: depth,
 		closed:         make(chan struct{}),
 		peerFin:        make(chan struct{}),
@@ -173,6 +180,15 @@ func (t *transport) poll() {
 			}
 			switch c.Opcode {
 			case gordma.WCSend:
+				if c.WRID >= bufferWRIDBase {
+					// Zero-copy Buffer SEND completed.
+					select {
+					case t.bufDone <- struct{}{}:
+					case <-t.closed:
+						return
+					}
+					continue
+				}
 				if c.WRID >= creditWRIDBase {
 					// Credit-return SEND completed: free its slot.
 					select {
@@ -304,6 +320,60 @@ func (t *transport) sendFrame(payload []byte, more bool) error {
 	}
 	select {
 	case <-t.sendDone:
+		return nil
+	case <-t.closed:
+		return t.closedErr()
+	}
+}
+
+// sendBuffer transmits a caller-owned, pre-registered Buffer with no copy. The
+// frame header is written into a reserved credit slot and sent as the first
+// SGE; the user's MR is the second SGE, so its payload is DMA'd directly from
+// the caller's pinned memory. Zero-copy sends are single-frame (no
+// fragmentation): a Buffer larger than one frame payload is rejected.
+func (t *transport) sendBuffer(b *Buffer) error {
+	if len(b.buf) > t.payload {
+		return ErrMessageTooLarge
+	}
+	if err := b.state.beginSend(); err != nil {
+		return err
+	}
+	defer b.state.completeSend()
+
+	t.startPoller()
+	if !t.credits.acquire() {
+		return t.closedErr()
+	}
+	t.sendMu.Lock()
+	defer t.sendMu.Unlock()
+
+	// Borrow a credit slot to hold the frame header bytes.
+	var hslot int
+	select {
+	case hslot = <-t.creditFree:
+	case <-t.closed:
+		return t.closedErr()
+	}
+	defer func() { t.creditFree <- hslot }()
+
+	hoff := hslot * t.slotSize
+	hdr := frameHeader{value: uint32(len(b.buf))} // single frame: flagMore clear
+	hdr.encode(t.sendBuf[hoff:])
+
+	wr := gordma.SendWR{
+		WRID:   bufferWRIDBase,
+		Opcode: gordma.OpSend,
+		SGList: []gordma.SGE{
+			gordma.SGEFromMR(t.sendMR, hoff, frameHeaderSize),
+			gordma.SGEFromMR(b.mr, 0, len(b.buf)),
+		},
+		Signaled: true,
+	}
+	if err := t.qp.PostSend(wr); err != nil {
+		return err
+	}
+	select {
+	case <-t.bufDone:
 		return nil
 	case <-t.closed:
 		return t.closedErr()
