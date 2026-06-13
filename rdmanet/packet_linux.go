@@ -34,6 +34,8 @@ type PacketConn struct {
 	cq  *gordma.CQ
 	qp  *gordma.QP
 
+	compCh *gordma.CompChannel
+
 	sendMR  *gordma.MR
 	recvMR  *gordma.MR
 	sendBuf []byte
@@ -120,7 +122,16 @@ func (pc *PacketConn) setup() error {
 	}
 	pc.pd = pd
 
-	cq, err := ctx.CreateCQ(pc.depth*2+1, nil)
+	// Event-mode polling needs a completion channel bound to the CQ.
+	var ch *gordma.CompChannel
+	if pc.cfg.pollMode == PollEvent {
+		ch, err = ctx.CreateCompChannel()
+		if err != nil {
+			return err
+		}
+		pc.compCh = ch
+	}
+	cq, err := ctx.CreateCQ(pc.depth*2+1, ch)
 	if err != nil {
 		return err
 	}
@@ -279,9 +290,43 @@ func (pc *PacketConn) waitSend() error {
 			}
 		}
 		if n == 0 {
-			runtime.Gosched()
+			if err := pc.waitCQ(); err != nil {
+				return err
+			}
 		}
 	}
+}
+
+// waitCQ yields between empty polls. In PollEvent mode it arms the CQ and
+// blocks on the completion channel; in PollBusy mode it just yields the
+// goroutine. On Close (channel torn down) it returns nil so the caller re-checks
+// pc.closed. If no completion channel is bound it permanently falls back to
+// busy yielding.
+func (pc *PacketConn) waitCQ() error {
+	if pc.cfg.pollMode != PollEvent || pc.compCh == nil {
+		runtime.Gosched()
+		return nil
+	}
+	if err := pc.cq.ReqNotify(false); err != nil {
+		if errors.Is(err, gordma.ErrNoChannel) {
+			runtime.Gosched()
+			return nil
+		}
+		return err
+	}
+	if err := pc.cq.WaitEvent(); err != nil {
+		select {
+		case <-pc.closed:
+			return nil
+		default:
+		}
+		if errors.Is(err, gordma.ErrNoChannel) {
+			runtime.Gosched()
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 // ReadFrom blocks for the next datagram, copies its payload into b, and reports
@@ -331,7 +376,9 @@ func (pc *PacketConn) ReadFrom(b []byte) (int, *Addr, error) {
 			return nn, from, rerr
 		}
 		if n == 0 {
-			runtime.Gosched()
+			if err := pc.waitCQ(); err != nil {
+				return 0, nil, err
+			}
 		}
 	}
 }
@@ -477,6 +524,9 @@ func (pc *PacketConn) Close() error {
 		}
 		if pc.cq != nil {
 			_ = pc.cq.Close()
+		}
+		if pc.compCh != nil {
+			_ = pc.compCh.Close()
 		}
 		if pc.pd != nil {
 			_ = pc.pd.Close()

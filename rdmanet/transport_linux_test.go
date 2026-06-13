@@ -23,14 +23,16 @@ func TestMessageErrorSentinelsDistinct(t *testing.T) {
 	}
 }
 
+// TestNewTransportRejectsBadSizing verifies invalid sizing is rejected before
+// any verbs call (no device needed), for both poll modes.
 func TestNewTransportRejectsBadSizing(t *testing.T) {
-	// Invalid sizing is rejected before any verbs call, so this runs without a
-	// device. slotSize must exceed the frame header.
-	if _, err := newTransport(nil, nil, nil, frameHeaderSize, 4); err == nil {
-		t.Error("newTransport: want error for slotSize == frameHeaderSize")
-	}
-	if _, err := newTransport(nil, nil, nil, 1024, 0); err == nil {
-		t.Error("newTransport: want error for depth=0")
+	for _, m := range []PollMode{PollEvent, PollBusy} {
+		if _, err := newTransport(nil, nil, nil, frameHeaderSize, 4, m); err == nil {
+			t.Errorf("newTransport(%v): want error for slotSize == frameHeaderSize", m)
+		}
+		if _, err := newTransport(nil, nil, nil, 1024, 0, m); err == nil {
+			t.Errorf("newTransport(%v): want error for depth=0", m)
+		}
 	}
 }
 
