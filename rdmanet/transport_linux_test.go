@@ -4,6 +4,7 @@ package rdmanet
 
 import (
 	"errors"
+	"io"
 	"testing"
 )
 
@@ -39,5 +40,38 @@ func TestSendMsgRejectsHugeMessage(t *testing.T) {
 	tr := &transport{payload: 8, depth: 1, closed: make(chan struct{}), credits: newCreditTracker(0)}
 	if err := tr.sendMsg(make([]byte, maxMessageBytes+1)); !errors.Is(err, ErrMessageTooLarge) {
 		t.Errorf("sendMsg oversized: want ErrMessageTooLarge, got %v", err)
+	}
+}
+
+// TestNextMessageEOFOnFin verifies the receive path returns io.EOF once a FIN
+// has been signalled and no buffered frames remain — without any RDMA device.
+func TestNextMessageEOFOnFin(t *testing.T) {
+	tr := &transport{
+		depth:   1,
+		recvQ:   make(chan recvFrame, 1),
+		peerFin: make(chan struct{}),
+		closed:  make(chan struct{}),
+		credits: newCreditTracker(0),
+		reasm:   newReassembler(0),
+	}
+	tr.finOnce.Do(func() { close(tr.peerFin) })
+	if _, err := tr.nextMessage(); !errors.Is(err, io.EOF) {
+		t.Errorf("nextMessage after FIN: want io.EOF, got %v", err)
+	}
+}
+
+// TestNextMessageClosedReturnsClosedErr verifies a closed transport's receive
+// path returns the closed error rather than blocking.
+func TestNextMessageClosedReturnsClosedErr(t *testing.T) {
+	tr := &transport{
+		recvQ:   make(chan recvFrame),
+		peerFin: make(chan struct{}),
+		closed:  make(chan struct{}),
+		credits: newCreditTracker(0),
+		reasm:   newReassembler(0),
+	}
+	close(tr.closed)
+	if _, err := tr.nextMessage(); err == nil {
+		t.Error("nextMessage on closed transport: want error, got nil")
 	}
 }

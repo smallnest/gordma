@@ -5,6 +5,7 @@ package rdmanet
 import (
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/smallnest/gordma"
@@ -52,6 +53,10 @@ type Conn struct {
 	// message transport (buffers the leftover of an oversized message).
 	readMu sync.Mutex
 	reader *streamReader
+
+	// closed makes Close idempotent and lets send/recv fail fast after Close.
+	closed    atomic.Bool
+	closeOnce sync.Once
 }
 
 // Listener accepts incoming RC connections established via rdma_cm, or via the
@@ -163,8 +168,11 @@ func (c *Conn) dataPath() (*gordma.QP, *gordma.CQ, *gordma.PD) {
 
 // transport lazily builds the RC data path (bounce rings + completion poller)
 // on first use. The same transport is reused for all subsequent SendMsg/RecvMsg
-// calls on this Conn.
+// calls on this Conn. After Close it returns gordma.ErrClosed.
 func (c *Conn) transport() (*transport, error) {
+	if c.isClosed() {
+		return nil, gordma.ErrClosed
+	}
 	c.trOnce.Do(func() {
 		qp, cq, pd := c.dataPath()
 		if qp == nil || cq == nil || pd == nil {
@@ -175,6 +183,8 @@ func (c *Conn) transport() (*transport, error) {
 	})
 	return c.tr, c.trErr
 }
+
+func (c *Conn) isClosed() bool { return c.closed.Load() }
 
 // SendMsg sends p as a single message, preserving its boundary, and blocks
 // until the send completes. A message larger than the configured buffer size
@@ -250,40 +260,48 @@ func (c *Conn) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// Close releases the connection's QP/CQ/PD and CM resources. For the handshake
-// path it releases the directly-owned verbs resources in order
-// (MR→QP→CQ→PD→Context).
+// Close releases the connection's QP/CQ/PD and CM resources. It is idempotent
+// (safe to call multiple times) and wakes any goroutine blocked in
+// SendMsg/RecvMsg/Read/Write, which then observe gordma.ErrClosed. For the
+// handshake path it releases the directly-owned verbs resources in order
+// (MR→QP→CQ→PD→Context). Releasing the transport sends a best-effort FIN so the
+// peer's RecvMsg/Read returns io.EOF.
 func (c *Conn) Close() error {
 	if c == nil {
 		return nil
 	}
-	if c.tr != nil {
-		c.tr.shutdown()
-	}
-	if c.cm != nil {
-		return c.cm.Close()
-	}
-	if c.mr != nil {
-		_ = c.mr.Close()
-		c.mr = nil
-	}
-	if c.qp != nil {
-		_ = c.qp.Close()
-		c.qp = nil
-	}
-	if c.cq != nil {
-		_ = c.cq.Close()
-		c.cq = nil
-	}
-	if c.pd != nil {
-		_ = c.pd.Close()
-		c.pd = nil
-	}
-	if c.ctx != nil {
-		_ = c.ctx.Close()
-		c.ctx = nil
-	}
-	return nil
+	var err error
+	c.closeOnce.Do(func() {
+		c.closed.Store(true)
+		if c.tr != nil {
+			c.tr.shutdown()
+		}
+		if c.cm != nil {
+			err = c.cm.Close()
+			return
+		}
+		if c.mr != nil {
+			_ = c.mr.Close()
+			c.mr = nil
+		}
+		if c.qp != nil {
+			_ = c.qp.Close()
+			c.qp = nil
+		}
+		if c.cq != nil {
+			_ = c.cq.Close()
+			c.cq = nil
+		}
+		if c.pd != nil {
+			_ = c.pd.Close()
+			c.pd = nil
+		}
+		if c.ctx != nil {
+			_ = c.ctx.Close()
+			c.ctx = nil
+		}
+	})
+	return err
 }
 
 // LocalAddr returns the local endpoint address ("host:port"). It is populated

@@ -5,6 +5,7 @@ package rdmanet
 import (
 	"errors"
 	"fmt"
+	"io"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -65,6 +66,9 @@ type transport struct {
 	closed   chan struct{}
 	closeOne sync.Once
 	pollErr  atomic.Pointer[error]
+
+	peerFin chan struct{} // closed when a FIN frame is received from the peer
+	finOnce sync.Once
 }
 
 // recvFrame is a completed inbound data frame: the recv slot it landed in and
@@ -112,6 +116,7 @@ func newTransport(pd *gordma.PD, qp *gordma.QP, cq *gordma.CQ, slotSize, depth i
 		reasm:          newReassembler(maxMessageBytes),
 		creditSlotBase: depth,
 		closed:         make(chan struct{}),
+		peerFin:        make(chan struct{}),
 	}
 	for i := 0; i < depth; i++ {
 		t.sendFree <- i
@@ -192,6 +197,16 @@ func (t *transport) poll() {
 				if hdr.isCredit() {
 					// Peer returned credits; repost the slot immediately.
 					t.credits.release(int(hdr.value))
+					if rerr := t.postRecv(slot); rerr != nil {
+						t.fail(rerr)
+						return
+					}
+					continue
+				}
+				if hdr.isFin() {
+					// Peer closed gracefully: signal EOF after queued frames
+					// drain, then repost the slot.
+					t.finOnce.Do(func() { close(t.peerFin) })
 					if rerr := t.postRecv(slot); rerr != nil {
 						t.fail(rerr)
 						return
@@ -321,9 +336,32 @@ func (t *transport) returnCredit(n int) {
 	}
 }
 
+// sendFin sends a graceful-shutdown control frame telling the peer no more
+// messages will follow. Best-effort: errors are ignored since the transport is
+// being torn down.
+func (t *transport) sendFin() {
+	var slot int
+	select {
+	case slot = <-t.creditFree:
+	case <-t.closed:
+		return
+	}
+	off := slot * t.slotSize
+	hdr := frameHeader{flags: flagFin}
+	hdr.encode(t.sendBuf[off:])
+	wr := gordma.SendWR{
+		WRID:     creditWRIDBase + uint64(slot-t.creditSlotBase),
+		Opcode:   gordma.OpSend,
+		SGList:   []gordma.SGE{gordma.SGEFromMR(t.sendMR, off, frameHeaderSize)},
+		Signaled: true,
+	}
+	_ = t.qp.PostSend(wr)
+}
+
 // nextMessage pulls data frames from recvQ and reassembles them into a complete
 // message. Each consumed frame's recv slot is reposted and one credit is
-// returned to the peer.
+// returned to the peer. When the peer has sent FIN and no buffered frames
+// remain, it returns io.EOF.
 func (t *transport) nextMessage() ([]byte, error) {
 	for {
 		select {
@@ -342,6 +380,27 @@ func (t *transport) nextMessage() ([]byte, error) {
 			}
 			if complete {
 				return msg, nil
+			}
+		case <-t.peerFin:
+			// Peer closed gracefully. Drain any frame that raced in ahead of the
+			// FIN signal; otherwise report EOF.
+			select {
+			case fr := <-t.recvQ:
+				off := fr.slot*t.slotSize + frameHeaderSize
+				payload := t.recvBuf[off : off+fr.n]
+				msg, complete, aerr := t.reasm.add(payload, fr.hdr.hasMore())
+				if rerr := t.postRecv(fr.slot); rerr != nil {
+					return nil, rerr
+				}
+				t.returnCredit(1)
+				if aerr != nil {
+					return nil, aerr
+				}
+				if complete {
+					return msg, nil
+				}
+			default:
+				return nil, io.EOF
 			}
 		case <-t.closed:
 			return nil, t.closedErr()
@@ -380,7 +439,17 @@ func (t *transport) closedErr() error {
 	return gordma.ErrClosed
 }
 
+// shutdown gracefully signals the peer (best-effort FIN), stops the poller, and
+// releases the registered rings. It is safe to call once; the owning Conn
+// guards against double-shutdown.
 func (t *transport) shutdown() {
+	// Best-effort graceful FIN so the peer's RecvMsg/Read sees io.EOF rather
+	// than a connection error. Only attempt while still open.
+	select {
+	case <-t.closed:
+	default:
+		t.sendFin()
+	}
 	t.close()
 	if t.sendMR != nil {
 		_ = t.sendMR.Close()

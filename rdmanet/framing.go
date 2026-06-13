@@ -26,6 +26,9 @@ const (
 	// flagCredit marks a control frame that carries returned receive credits
 	// rather than message payload.
 	flagCredit uint8 = 1 << 1
+	// flagFin marks a graceful-shutdown control frame: the sender will send no
+	// more messages. The receiver returns io.EOF once buffered frames drain.
+	flagFin uint8 = 1 << 2
 )
 
 // ErrMessageTooLargeReassembly is returned when an inbound message exceeds the
@@ -64,6 +67,9 @@ func decodeHeader(buf []byte) (frameHeader, error) {
 
 // isCredit reports whether the header marks a credit control frame.
 func (h frameHeader) isCredit() bool { return h.flags&flagCredit != 0 }
+
+// isFin reports whether the header marks a graceful-shutdown control frame.
+func (h frameHeader) isFin() bool { return h.flags&flagFin != 0 }
 
 // hasMore reports whether more fragments follow this data frame.
 func (h frameHeader) hasMore() bool { return h.flags&flagMore != 0 }
