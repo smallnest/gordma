@@ -127,3 +127,6 @@ func (p *PacketConn) Close() error { return nil }
 
 // LocalAddr returns nil on the stub build.
 func (p *PacketConn) LocalAddr() *Addr { return nil }
+
+// Register returns ErrNotSupported on the stub build.
+func (p *PacketConn) Register(registryAddr, name string) error { return gordma.ErrNotSupported }

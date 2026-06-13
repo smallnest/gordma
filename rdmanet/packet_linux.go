@@ -442,6 +442,16 @@ func (pc *PacketConn) LocalAddr() *Addr {
 	return pc.local
 }
 
+// Register publishes this endpoint's LocalAddr under name to the registry at
+// registryAddr, so peers can find it via LookupAddr. It is optional sugar over
+// distributing LocalAddr().String() yourself.
+func (pc *PacketConn) Register(registryAddr, name string) error {
+	if pc == nil {
+		return gordma.ErrClosed
+	}
+	return registerAddr(registryAddr, name, pc.local)
+}
+
 // Close releases the datagram endpoint and all cached AddressHandles. It is
 // idempotent.
 func (pc *PacketConn) Close() error {
