@@ -4,6 +4,7 @@ package rdmanet
 
 import (
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/smallnest/gordma"
@@ -39,6 +40,13 @@ type Conn struct {
 
 	localAddr  string
 	remoteAddr string
+
+	// tr is the lazily-initialized RC data path (bounce rings + poller). It is
+	// created on first SendMsg/RecvMsg so connections that are only used for
+	// establishment pay nothing.
+	trOnce sync.Once
+	tr     *transport
+	trErr  error
 }
 
 // Listener accepts incoming RC connections established via rdma_cm, or via the
@@ -139,14 +147,61 @@ func (l *Listener) Addr() string {
 	return l.addr
 }
 
-// SendMsg sends a single message, preserving its boundary. (Issue #35.)
-func (c *Conn) SendMsg(p []byte) error { return errNotImplemented }
+// dataPath returns the connection's QP/CQ/PD regardless of how the Conn was
+// built (rdma_cm CMConn or directly-owned handshake resources).
+func (c *Conn) dataPath() (*gordma.QP, *gordma.CQ, *gordma.PD) {
+	if c.cm != nil {
+		return c.cm.QP(), c.cm.CQ(), c.cm.PD()
+	}
+	return c.qp, c.cq, c.pd
+}
 
-// RecvMsg receives a single message. (Issue #35.)
-func (c *Conn) RecvMsg() ([]byte, error) { return nil, errNotImplemented }
+// transport lazily builds the RC data path (bounce rings + completion poller)
+// on first use. The same transport is reused for all subsequent SendMsg/RecvMsg
+// calls on this Conn.
+func (c *Conn) transport() (*transport, error) {
+	c.trOnce.Do(func() {
+		qp, cq, pd := c.dataPath()
+		if qp == nil || cq == nil || pd == nil {
+			c.trErr = gordma.ErrClosed
+			return
+		}
+		c.tr, c.trErr = newTransport(pd, qp, cq, c.cfg.bufferSize, c.cfg.queueDepth)
+	})
+	return c.tr, c.trErr
+}
 
-// RecvMsgBuf receives a single message into p. (Issue #35.)
-func (c *Conn) RecvMsgBuf(p []byte) (int, error) { return 0, errNotImplemented }
+// SendMsg sends p as a single message, preserving its boundary, and blocks
+// until the send completes. A message larger than the configured buffer size
+// returns ErrMessageTooLarge (fragmentation lands in #36).
+func (c *Conn) SendMsg(p []byte) error {
+	tr, err := c.transport()
+	if err != nil {
+		return err
+	}
+	return tr.sendMsg(p)
+}
+
+// RecvMsg blocks until a full message arrives and returns it in a freshly
+// allocated slice.
+func (c *Conn) RecvMsg() ([]byte, error) {
+	tr, err := c.transport()
+	if err != nil {
+		return nil, err
+	}
+	return tr.recvMsg()
+}
+
+// RecvMsgBuf blocks until a full message arrives and copies it into p. If p is
+// too small, the message boundary is preserved and ErrShortBuffer is returned
+// rather than truncating.
+func (c *Conn) RecvMsgBuf(p []byte) (int, error) {
+	tr, err := c.transport()
+	if err != nil {
+		return 0, err
+	}
+	return tr.recvMsgBuf(p)
+}
 
 // Read implements io.Reader over the message stream. (Issue #37.)
 func (c *Conn) Read(p []byte) (int, error) { return 0, errNotImplemented }
@@ -160,6 +215,9 @@ func (c *Conn) Write(p []byte) (int, error) { return 0, errNotImplemented }
 func (c *Conn) Close() error {
 	if c == nil {
 		return nil
+	}
+	if c.tr != nil {
+		c.tr.shutdown()
 	}
 	if c.cm != nil {
 		return c.cm.Close()
