@@ -3,8 +3,11 @@
 // — no manual Addr copy-paste.
 //
 //	registry: go run . -registry :9100
-//	server:   go run . -r 127.0.0.1:9100 -name nodeA
-//	client:   go run . -r 127.0.0.1:9100 -name nodeA -send
+//	server:   go run . -r 10.214.180.34:9100 -name nodeA
+//	client:   go run . -r 10.214.180.34:9100 -name nodeA -send
+//
+// Defaults match the gajl H20 GPU nodes: device mlx5_1 (GPU net xgbe1) and
+// RoCE v2 GID index 3. Override with -d / -x (use -d mlx5_0 for CPU xgbe0).
 package main
 
 import (
@@ -21,6 +24,8 @@ func main() {
 	regAddr := flag.String("r", "", "registry address to use")
 	name := flag.String("name", "node", "name to register/lookup")
 	send := flag.Bool("send", false, "client mode: look up name and send to it")
+	device := flag.String("d", "mlx5_1", "RDMA device (mlx5_0=CPU/xgbe0, mlx5_1..8=GPU/xgbe1..8)")
+	gidIndex := flag.Int("x", 3, "GID index (RoCE v2)")
 	flag.Parse()
 
 	if *reg != "" {
@@ -31,11 +36,12 @@ func main() {
 		fmt.Println("RDMA not supported on this platform:", gordma.ErrNotSupported)
 		return
 	}
+	opts := []rdmanet.Option{rdmanet.WithDevice(*device), rdmanet.WithGIDIndex(*gidIndex)}
 	var err error
 	if *send {
-		err = client(*regAddr, *name)
+		err = client(*regAddr, *name, opts)
 	} else {
-		err = server(*regAddr, *name)
+		err = server(*regAddr, *name, opts)
 	}
 	if err != nil {
 		log.Fatal(err)
@@ -52,8 +58,8 @@ func runRegistry(addr string) {
 	select {} // serve until killed
 }
 
-func server(regAddr, name string) error {
-	pc, err := rdmanet.ListenPacket("")
+func server(regAddr, name string, opts []rdmanet.Option) error {
+	pc, err := rdmanet.ListenPacket("", opts...)
 	if err != nil {
 		return err
 	}
@@ -71,12 +77,12 @@ func server(regAddr, name string) error {
 	return nil
 }
 
-func client(regAddr, name string) error {
+func client(regAddr, name string, opts []rdmanet.Option) error {
 	to, err := rdmanet.LookupAddr(regAddr, name)
 	if err != nil {
 		return err
 	}
-	pc, err := rdmanet.ListenPacket("")
+	pc, err := rdmanet.ListenPacket("", opts...)
 	if err != nil {
 		return err
 	}

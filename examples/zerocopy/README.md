@@ -6,9 +6,11 @@ bounce-buffer copy.
 
 ```sh
 go run . -l 0.0.0.0:18515   # server -> received "zero-copy payload..." 
-go run . 10.0.0.1:18515     # client sends a 64-byte registered buffer
+go run . 10.214.180.34:18515     # client sends a 64-byte registered buffer
 ```
 
 The buffer sends its full allocated length (64 bytes here, zero-padded after the
 payload). Requires RDMA hardware; prints a friendly message on unsupported
 platforms.
+
+> Defaults: `-d mlx5_1 -x 3` (gajl H20 first GPU NIC xgbe1, RoCE v2). Use `-d mlx5_0` for the CPU network (xgbe0). See [../README.md](../README.md).
