@@ -3,6 +3,8 @@
 Runnable, self-contained examples for the high-level `rdmanet` API, one feature
 per directory. Each is an independent `main` package with its own README.
 
+### Core features
+
 | Directory | Feature |
 |-----------|---------|
 | [echo-msg](echo-msg/) | RC message semantics (`SendMsg`/`RecvMsg`) |
@@ -13,6 +15,20 @@ per directory. Each is an independent `main` package with its own README.
 | [zerocopy](zerocopy/) | Zero-copy send (`AllocBuffer`/`SendBuffer`) |
 | [registry](registry/) | Out-of-band UD address discovery (`NewRegistry`/`LookupAddr`) |
 | [pollmode](pollmode/) | CQ poll mode selection (`WithPollMode`) |
+
+### Scenarios
+
+| Directory | Scenario |
+|-----------|----------|
+| [file-transfer](file-transfer/) | Stream a file with `io.Copy` over `Conn`; graceful EOF |
+| [large-message](large-message/) | Multi-MiB message: fragmentation/reassembly + sizing tuning |
+| [rpc](rpc/) | Request/response loop (`RecvMsg`→handle→`SendMsg`) |
+| [chat](chat/) | Full-duplex: concurrent send + receive goroutines |
+| [connection-styles](connection-styles/) | rc-cm vs rc-handshake vs ud, one `-mode` flag |
+| [multi-client](multi-client/) | RC server `Accept` loop serving many clients |
+| [ud-broadcast](ud-broadcast/) | One UD sender → many registry-discovered peers (AH cache) |
+| [bench-throughput](bench-throughput/) | `SendMsg` vs `SendBatch` Gb/s self-test |
+| [tuning](tuning/) | Every `Option` with a flag + guidance |
 
 All examples build on every platform (`go build ./examples/...`). They require
 RDMA hardware to run; on unsupported platforms they print
