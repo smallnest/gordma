@@ -9,7 +9,7 @@ Selecting the CQ completion-draining strategy via
 
 ```sh
 go run . -l 0.0.0.0:18515 -poll=busy    # server, busy-poll
-go run . 192.0.2.1:18515 -poll=event     # client, event-driven -> echo: ping
+go run . 33.0.226.25:18515 -poll=event     # client, event-driven -> echo: ping
 ```
 
 Both modes are functionally identical; only the latency/CPU profile differs.

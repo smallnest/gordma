@@ -4,8 +4,8 @@
 // get.
 //
 //	registry: go run . -registry :9100
-//	receiver: go run . -r 192.0.2.1:9100 -name node1   (run several, different names)
-//	sender:   go run . -r 192.0.2.1:9100 -to node1,node2,node3 -send
+//	receiver: go run . -r 10.214.180.34:9100 -name node1   (run several, different names)
+//	sender:   go run . -r 10.214.180.34:9100 -to node1,node2,node3 -send
 //
 // Defaults target the first GPU NIC: device mlx5_1 (GPU net xgbe1) and
 // RoCE v2 GID index 3. Override with -d / -x (use -d mlx5_0 for CPU xgbe0).

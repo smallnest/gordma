@@ -7,7 +7,7 @@ The server drains both passes with `RecvBatch`.
 
 ```sh
 go run . -l 0.0.0.0:18515                     # server
-go run . 192.0.2.1:18515 -n 100000 -s 1024 -b 32
+go run . 33.0.226.25:18515 -n 100000 -s 1024 -b 32
 # -> SendMsg  : 100000 x 1024 B in ... -> X Gb/s, Y Mmsg/s
 #    SendBatch: 100000 x 1024 B in ... -> X' Gb/s, Y' Mmsg/s
 ```

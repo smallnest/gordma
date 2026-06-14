@@ -7,7 +7,7 @@ and that closing the connection wakes a blocked `RecvMsg` with `io.EOF`.
 
 ```sh
 go run . -l 0.0.0.0:18515   # server
-go run . 192.0.2.1:18515    # client
+go run . 33.0.226.25:18515    # client
 ```
 
 Type lines and press enter to send; Ctrl-D (stdin EOF) closes the connection,

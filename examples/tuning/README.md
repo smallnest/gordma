@@ -15,7 +15,7 @@ resolved config, plus a small echo so you can experiment.
 
 ```sh
 go run . -l 0.0.0.0:18515 -depth 256 -buf 256 -poll busy
-go run . 192.0.2.1:18515 -depth 256 -buf 256 -poll busy
+go run . 33.0.226.25:18515 -depth 256 -buf 256 -poll busy
 # config: device=mlx5_1 port=1 gidIndex=3 depth=256 buf=256KiB poll=busy handshake=false
 # echo: tuned
 ```

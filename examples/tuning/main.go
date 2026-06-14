@@ -3,7 +3,7 @@
 // you can experiment with flags.
 //
 //	server: go run . -l :18515
-//	client: go run . 192.0.2.1:18515
+//	client: go run . 33.0.226.25:18515
 //
 // Flags map 1:1 to options:
 //

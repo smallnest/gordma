@@ -9,7 +9,7 @@
 //
 //	rc-cm / rc-handshake:
 //	  server: go run . -mode rc-cm -l :18515
-//	  client: go run . -mode rc-cm 192.0.2.1:18515
+//	  client: go run . -mode rc-cm 33.0.226.25:18515
 //	ud:
 //	  server: go run . -mode ud
 //	  client: go run . -mode ud '<server-addr-string>'
