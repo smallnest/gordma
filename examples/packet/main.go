@@ -4,7 +4,7 @@
 //	server: go run .
 //	client: go run . '<server-addr-string>'
 //
-// Defaults match the gajl H20 GPU nodes: device mlx5_1 (GPU net xgbe1) and
+// Defaults target the first GPU NIC: device mlx5_1 (GPU net xgbe1) and
 // RoCE v2 GID index 3. Override with -d / -x (use -d mlx5_0 for CPU xgbe0).
 package main
 

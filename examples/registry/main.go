@@ -3,10 +3,10 @@
 // — no manual Addr copy-paste.
 //
 //	registry: go run . -registry :9100
-//	server:   go run . -r 10.214.180.34:9100 -name nodeA
-//	client:   go run . -r 10.214.180.34:9100 -name nodeA -send
+//	server:   go run . -r 192.0.2.1:9100 -name nodeA
+//	client:   go run . -r 192.0.2.1:9100 -name nodeA -send
 //
-// Defaults match the gajl H20 GPU nodes: device mlx5_1 (GPU net xgbe1) and
+// Defaults target the first GPU NIC: device mlx5_1 (GPU net xgbe1) and
 // RoCE v2 GID index 3. Override with -d / -x (use -d mlx5_0 for CPU xgbe0).
 package main
 

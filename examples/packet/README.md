@@ -16,4 +16,4 @@ go run . 'fe80:0000:0000:0000:0000:0000:0000:0001%0x1a2b'
 For automated discovery instead of copy-pasting the Addr, see `../registry`.
 Requires RDMA hardware; prints a friendly message on unsupported platforms.
 
-> Defaults: `-d mlx5_1 -x 3` (gajl H20 first GPU NIC xgbe1, RoCE v2). Use `-d mlx5_0` for the CPU network (xgbe0). See [../README.md](../README.md).
+> Defaults: `-d mlx5_1 -x 3` (first GPU NIC xgbe1, RoCE v2). Use `-d mlx5_0` for the CPU network (xgbe0). See [../README.md](../README.md).

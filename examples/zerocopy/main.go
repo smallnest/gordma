@@ -2,9 +2,9 @@
 // pre-registered buffer and send it without a bounce copy.
 //
 //	server: go run . -l :18515
-//	client: go run . 10.214.180.34:18515
+//	client: go run . 192.0.2.1:18515
 //
-// Defaults match the gajl H20 GPU nodes: device mlx5_1 (GPU net xgbe1) and
+// Defaults target the first GPU NIC: device mlx5_1 (GPU net xgbe1) and
 // RoCE v2 GID index 3. Override with -d / -x (use -d mlx5_0 for CPU xgbe0).
 package main
 
