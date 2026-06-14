@@ -9,10 +9,10 @@ Selecting the CQ completion-draining strategy via
 
 ```sh
 go run . -l 0.0.0.0:18515 -poll=busy    # server, busy-poll
-go run . 10.214.180.34:18515 -poll=event     # client, event-driven -> echo: ping
+go run . 192.0.2.1:18515 -poll=event     # client, event-driven -> echo: ping
 ```
 
 Both modes are functionally identical; only the latency/CPU profile differs.
 Requires RDMA hardware; prints a friendly message on unsupported platforms.
 
-> Defaults: `-d mlx5_1 -x 3` (gajl H20 first GPU NIC xgbe1, RoCE v2). Use `-d mlx5_0` for the CPU network (xgbe0). See [../README.md](../README.md).
+> Defaults: `-d mlx5_1 -x 3` (first GPU NIC xgbe1, RoCE v2). Use `-d mlx5_0` for the CPU network (xgbe0). See [../README.md](../README.md).
