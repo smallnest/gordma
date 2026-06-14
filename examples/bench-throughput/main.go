@@ -4,7 +4,7 @@
 // benefit. The server drains with RecvBatch.
 //
 //	server: go run . -l :18515
-//	client: go run . 192.0.2.1:18515 -n 100000 -s 1024
+//	client: go run . 33.0.226.25:18515 -n 100000 -s 1024
 //
 // Defaults target the first GPU NIC: device mlx5_1 (GPU net xgbe1) and
 // RoCE v2 GID index 3. Override with -d / -x (use -d mlx5_0 for CPU xgbe0).

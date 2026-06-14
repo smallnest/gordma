@@ -7,8 +7,8 @@ before the next `Accept`. Run the server once and the client repeatedly.
 ```sh
 go run . -l 0.0.0.0:18515            # server (long-lived, Ctrl-C to stop)
 
-go run . 192.0.2.1:18515 -msg first  # client 1 -> echo: first
-go run . 192.0.2.1:18515 -msg second # client 2 -> echo: second
+go run . 33.0.226.25:18515 -msg first  # client 1 -> echo: first
+go run . 33.0.226.25:18515 -msg second # client 2 -> echo: second
 ```
 
 Shows the listener's continuous `Accept` and per-connection isolation.

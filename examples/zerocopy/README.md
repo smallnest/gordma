@@ -6,7 +6,7 @@ bounce-buffer copy.
 
 ```sh
 go run . -l 0.0.0.0:18515   # server -> received "zero-copy payload..." 
-go run . 192.0.2.1:18515     # client sends a 64-byte registered buffer
+go run . 33.0.226.25:18515     # client sends a 64-byte registered buffer
 ```
 
 The buffer sends its full allocated length (64 bytes here, zero-padded after the

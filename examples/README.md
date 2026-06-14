@@ -43,15 +43,31 @@ Defaults assume a typical multi-NIC RoCE host (`show_gids` layout):
 - RoCE v2 lives at **GID index 3** on every device.
 
 Each example defaults to **`-d mlx5_1 -x 3`** (first GPU NIC, RoCE v2). Override
-with `-d`/`-x`; use `-d mlx5_0` for the CPU network. Two-node example
-(echo-msg over the CPU NIC):
+with `-d`/`-x`; use `-d mlx5_0` for the CPU network.
+
+The two-node sample IPs used throughout the per-example READMEs are:
+
+| Node | CPU net (`mlx5_0` / xgbe0) | GPU net (`mlx5_1` / xgbe1) |
+|------|----------------------------|----------------------------|
+| node1 (server) | `10.214.180.34` | `33.0.226.25` |
+| node2 (client) | `10.214.180.35` | `33.0.226.27` |
+
+Default examples use `mlx5_1`, so the client dials node1's GPU IP
+`33.0.226.25`. Two-node example over the **GPU** NIC (the default):
 
 ```sh
-# node A (server)
-go run ./examples/echo-msg -l 0.0.0.0:18515 -d mlx5_0 -x 3
+# node1 (server)
+go run ./examples/echo-msg -l 0.0.0.0:18515
 
-# node B (client) — dial node A's xgbe0 IP
-go run ./examples/echo-msg 192.0.2.1:18515 -d mlx5_0 -x 3
+# node2 (client) — dial node1's xgbe1 (GPU) IP
+go run ./examples/echo-msg 33.0.226.25:18515
+```
+
+Over the **CPU** NIC instead (`-d mlx5_0`, dial node1's xgbe0 IP):
+
+```sh
+go run ./examples/echo-msg -l 0.0.0.0:18515 -d mlx5_0
+go run ./examples/echo-msg 10.214.180.34:18515 -d mlx5_0
 ```
 
 Each example takes `-l ADDR` for server mode or a positional `HOST:PORT` for

@@ -7,7 +7,7 @@ Minimal RC message-semantics echo over `rdmanet` (`SendMsg`/`RecvMsg`).
 go run . -l 0.0.0.0:18515
 
 # client (node B)
-go run . 192.0.2.1:18515
+go run . 33.0.226.25:18515
 # -> echo: hello rdmanet
 ```
 

@@ -5,7 +5,7 @@ RC byte-stream echo using `rdmanet`'s `io.ReadWriteCloser` adapter
 
 ```sh
 go run . -l 0.0.0.0:18515   # server
-go run . 192.0.2.1:18515     # client -> echo: streamed bytes
+go run . 33.0.226.25:18515     # client -> echo: streamed bytes
 ```
 
 Requires RDMA hardware; prints a friendly message on unsupported platforms.

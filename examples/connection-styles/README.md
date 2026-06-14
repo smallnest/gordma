@@ -12,7 +12,7 @@ selected with `-mode`:
 ```sh
 # RC over rdma_cm (or swap in -mode rc-handshake)
 go run . -mode rc-cm -l 0.0.0.0:18515      # server
-go run . -mode rc-cm 192.0.2.1:18515       # client -> echo: hello RC
+go run . -mode rc-cm 33.0.226.25:18515       # client -> echo: hello RC
 
 # UD datagrams — server prints its Addr, client sends to it
 go run . -mode ud                          # server -> UD server addr: <gid%qpn>

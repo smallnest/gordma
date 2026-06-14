@@ -10,7 +10,7 @@ sends a FIN so the server's copy terminates on `io.EOF`.
 go run . -l 0.0.0.0:18515 -out received.bin
 
 # client streams payload.bin
-go run . 192.0.2.1:18515 -in payload.bin
+go run . 33.0.226.25:18515 -in payload.bin
 # -> sent N bytes / received N bytes -> received.bin
 ```
 

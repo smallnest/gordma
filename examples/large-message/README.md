@@ -7,7 +7,7 @@ boundary preserved. Both sides print the SHA-256 so you can confirm integrity.
 
 ```sh
 go run . -l 0.0.0.0:18515              # server -> received N bytes, sha256=...
-go run . 192.0.2.1:18515 -size 16      # client sends a 16 MiB message
+go run . 33.0.226.25:18515 -size 16      # client sends a 16 MiB message
 ```
 
 Tune the per-frame bounce buffer and queue depth with `-buf` (KiB) and

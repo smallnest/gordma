@@ -4,7 +4,7 @@
 // blocked RecvMsg.
 //
 //	server: go run . -l :18515
-//	client: go run . 192.0.2.1:18515
+//	client: go run . 33.0.226.25:18515
 //
 // Type lines and press enter; Ctrl-D (EOF on stdin) closes the connection,
 // which wakes the peer's receive loop with io.EOF.
