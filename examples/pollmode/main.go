@@ -2,7 +2,10 @@
 // WithPollMode. Pass -poll=busy or -poll=event.
 //
 //	server: go run . -l :18515 -poll=busy
-//	client: go run . 10.0.0.1:18515 -poll=event
+//	client: go run . 10.214.180.34:18515 -poll=event
+//
+// Defaults match the gajl H20 GPU nodes: device mlx5_1 (GPU net xgbe1) and
+// RoCE v2 GID index 3. Override with -d / -x (use -d mlx5_0 for CPU xgbe0).
 package main
 
 import (
@@ -17,6 +20,8 @@ import (
 func main() {
 	listen := flag.String("l", "", "listen address (server mode)")
 	poll := flag.String("poll", "event", "CQ poll mode: busy|event")
+	device := flag.String("d", "mlx5_1", "RDMA device (mlx5_0=CPU/xgbe0, mlx5_1..8=GPU/xgbe1..8)")
+	gidIndex := flag.Int("x", 3, "GID index (RoCE v2)")
 	flag.Parse()
 	if !gordma.Supported() {
 		fmt.Println("RDMA not supported on this platform:", gordma.ErrNotSupported)
@@ -26,14 +31,18 @@ func main() {
 	if *poll == "busy" {
 		mode = rdmanet.PollBusy
 	}
-	opt := rdmanet.WithPollMode(mode)
+	opts := []rdmanet.Option{
+		rdmanet.WithPollMode(mode),
+		rdmanet.WithDevice(*device),
+		rdmanet.WithGIDIndex(*gidIndex),
+	}
 	fmt.Printf("poll mode: %s\n", mode)
 
 	var err error
 	if *listen != "" {
-		err = server(*listen, opt)
+		err = server(*listen, opts)
 	} else if flag.NArg() > 0 {
-		err = client(flag.Arg(0), opt)
+		err = client(flag.Arg(0), opts)
 	} else {
 		log.Fatal("usage: pollmode -l :PORT [-poll=busy|event] | pollmode HOST:PORT [-poll=...]")
 	}
@@ -42,8 +51,8 @@ func main() {
 	}
 }
 
-func server(addr string, opt rdmanet.Option) error {
-	ln, err := rdmanet.Listen(addr, opt)
+func server(addr string, opts []rdmanet.Option) error {
+	ln, err := rdmanet.Listen(addr, opts...)
 	if err != nil {
 		return err
 	}
@@ -60,8 +69,8 @@ func server(addr string, opt rdmanet.Option) error {
 	return conn.SendMsg(msg)
 }
 
-func client(addr string, opt rdmanet.Option) error {
-	conn, err := rdmanet.Dial(addr, opt)
+func client(addr string, opts []rdmanet.Option) error {
+	conn, err := rdmanet.Dial(addr, opts...)
 	if err != nil {
 		return err
 	}

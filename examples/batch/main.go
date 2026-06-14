@@ -1,7 +1,10 @@
 // Command batch demonstrates SendBatch/RecvBatch for amortized message I/O.
 //
 //	server: go run . -l :18515
-//	client: go run . 10.0.0.1:18515
+//	client: go run . 10.214.180.34:18515
+//
+// Defaults match the gajl H20 GPU nodes: device mlx5_1 (GPU net xgbe1) and
+// RoCE v2 GID index 3. Override with -d / -x (use -d mlx5_0 for CPU xgbe0).
 package main
 
 import (
@@ -17,16 +20,19 @@ const batchN = 8
 
 func main() {
 	listen := flag.String("l", "", "listen address (server mode)")
+	device := flag.String("d", "mlx5_1", "RDMA device (mlx5_0=CPU/xgbe0, mlx5_1..8=GPU/xgbe1..8)")
+	gidIndex := flag.Int("x", 3, "GID index (RoCE v2)")
 	flag.Parse()
 	if !gordma.Supported() {
 		fmt.Println("RDMA not supported on this platform:", gordma.ErrNotSupported)
 		return
 	}
+	opts := []rdmanet.Option{rdmanet.WithDevice(*device), rdmanet.WithGIDIndex(*gidIndex)}
 	var err error
 	if *listen != "" {
-		err = server(*listen)
+		err = server(*listen, opts)
 	} else if flag.NArg() > 0 {
-		err = client(flag.Arg(0))
+		err = client(flag.Arg(0), opts)
 	} else {
 		log.Fatal("usage: batch -l :PORT | batch HOST:PORT")
 	}
@@ -35,8 +41,8 @@ func main() {
 	}
 }
 
-func server(addr string) error {
-	ln, err := rdmanet.Listen(addr)
+func server(addr string, opts []rdmanet.Option) error {
+	ln, err := rdmanet.Listen(addr, opts...)
 	if err != nil {
 		return err
 	}
@@ -58,8 +64,8 @@ func server(addr string) error {
 	return nil
 }
 
-func client(addr string) error {
-	conn, err := rdmanet.Dial(addr)
+func client(addr string, opts []rdmanet.Option) error {
+	conn, err := rdmanet.Dial(addr, opts...)
 	if err != nil {
 		return err
 	}

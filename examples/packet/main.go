@@ -3,6 +3,9 @@
 //
 //	server: go run .
 //	client: go run . '<server-addr-string>'
+//
+// Defaults match the gajl H20 GPU nodes: device mlx5_1 (GPU net xgbe1) and
+// RoCE v2 GID index 3. Override with -d / -x (use -d mlx5_0 for CPU xgbe0).
 package main
 
 import (
@@ -15,24 +18,27 @@ import (
 )
 
 func main() {
+	device := flag.String("d", "mlx5_1", "RDMA device (mlx5_0=CPU/xgbe0, mlx5_1..8=GPU/xgbe1..8)")
+	gidIndex := flag.Int("x", 3, "GID index (RoCE v2)")
 	flag.Parse()
 	if !gordma.Supported() {
 		fmt.Println("RDMA not supported on this platform:", gordma.ErrNotSupported)
 		return
 	}
+	opts := []rdmanet.Option{rdmanet.WithDevice(*device), rdmanet.WithGIDIndex(*gidIndex)}
 	var err error
 	if flag.NArg() > 0 {
-		err = client(flag.Arg(0))
+		err = client(flag.Arg(0), opts)
 	} else {
-		err = server()
+		err = server(opts)
 	}
 	if err != nil {
 		log.Fatal(err)
 	}
 }
 
-func server() error {
-	pc, err := rdmanet.ListenPacket("")
+func server(opts []rdmanet.Option) error {
+	pc, err := rdmanet.ListenPacket("", opts...)
 	if err != nil {
 		return err
 	}
@@ -47,12 +53,12 @@ func server() error {
 	return nil
 }
 
-func client(serverAddr string) error {
+func client(serverAddr string, opts []rdmanet.Option) error {
 	to, err := rdmanet.ResolveAddr(serverAddr)
 	if err != nil {
 		return err
 	}
-	pc, err := rdmanet.ListenPacket("")
+	pc, err := rdmanet.ListenPacket("", opts...)
 	if err != nil {
 		return err
 	}
