@@ -1,4 +1,4 @@
-// Command go-send_lat is a Go reimplementation of perftest's ib_send_lat: it
+// Command go_send_lat is a Go reimplementation of perftest's ib_send_lat: it
 // measures Send/Recv round-trip latency via ping-pong between two endpoints.
 // Run without an address to act as the server; pass the server address to act
 // as the client. Use --output=histogram for the full latency histogram.
@@ -14,12 +14,12 @@ import (
 )
 
 func main() {
-	cfg, err := perftest.ParseArgs("go-send_lat", os.Args[1:], os.Stderr)
+	cfg, err := perftest.ParseArgs("go_send_lat", os.Args[1:], os.Stderr)
 	if err != nil {
 		os.Exit(2)
 	}
 	if err := run(cfg); err != nil {
-		fmt.Fprintf(os.Stderr, "go-send_lat: %v\n", err)
+		fmt.Fprintf(os.Stderr, "go_send_lat: %v\n", err)
 		os.Exit(1)
 	}
 }

@@ -100,7 +100,7 @@
 - [ ] 集成测试：两端通过 Send/Recv 收发数据、通过 RDMA Write/Read 读写远端内存，数据校验一致
 - [ ] post 热路径无每次调用的堆分配（性能基线要求）
 
-### US-008: go-send_bw / go-send_lat 工具
+### US-008: go_send_bw / go_send_lat 工具
 **Description:** As a user, I want Go versions of ib_send_bw and ib_send_lat so that I can measure Send/Recv bandwidth and latency.
 
 **Acceptance Criteria:**
@@ -110,7 +110,7 @@
 - [ ] send_lat 输出：t_min、t_avg、t_max、p99 摘要（µs）+ `--output=histogram` 完整直方图，基于逐次 ping-pong 计时
 - [ ] RC 与 UD 模式在真实硬件上均跑通
 
-### US-009: go-write_bw / go-write_lat 工具
+### US-009: go_write_bw / go_write_lat 工具
 **Description:** As a user, I want Go versions of ib_write_bw and ib_write_lat so that I can measure RDMA Write performance.
 
 **Acceptance Criteria:**
@@ -119,7 +119,7 @@
 - [ ] write_lat 使用写远端标志位轮询（polling on last byte）方式测延迟，与 perftest 方法一致
 - [ ] 真实硬件上跑通
 
-### US-010: go-read_bw / go-read_lat 工具
+### US-010: go_read_bw / go_read_lat 工具
 **Description:** As a user, I want Go versions of ib_read_bw and ib_read_lat so that I can measure RDMA Read performance.
 
 **Acceptance Criteria:**

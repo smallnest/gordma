@@ -1,4 +1,4 @@
-// Command go-write_lat is a Go reimplementation of perftest's ib_write_lat: it
+// Command go_write_lat is a Go reimplementation of perftest's ib_write_lat: it
 // measures RDMA Write round-trip latency using the "polling on last byte"
 // method — each side writes into the peer's buffer and polls its local last
 // byte for the reply, matching perftest's approach.
@@ -16,16 +16,16 @@ import (
 )
 
 func main() {
-	cfg, err := perftest.ParseArgs("go-write_lat", os.Args[1:], os.Stderr)
+	cfg, err := perftest.ParseArgs("go_write_lat", os.Args[1:], os.Stderr)
 	if err != nil {
 		os.Exit(2)
 	}
 	if err := cfg.RequireOneSidedTCP(); err != nil {
-		fmt.Fprintf(os.Stderr, "go-write_lat: %v\n", err)
+		fmt.Fprintf(os.Stderr, "go_write_lat: %v\n", err)
 		os.Exit(2)
 	}
 	if err := run(cfg); err != nil {
-		fmt.Fprintf(os.Stderr, "go-write_lat: %v\n", err)
+		fmt.Fprintf(os.Stderr, "go_write_lat: %v\n", err)
 		os.Exit(1)
 	}
 }

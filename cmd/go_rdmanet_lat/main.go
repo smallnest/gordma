@@ -1,4 +1,4 @@
-// Command go-rdmanet_lat measures round-trip message latency over the rdmanet
+// Command go_rdmanet_lat measures round-trip message latency over the rdmanet
 // high-level API. Run without an address to act as the server (ping-pong
 // responder); pass the server address to act as the client (initiator), which
 // prints round-trip latency statistics.
@@ -19,13 +19,13 @@ import (
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintf(os.Stderr, "go-rdmanet_lat: %v\n", err)
+		fmt.Fprintf(os.Stderr, "go_rdmanet_lat: %v\n", err)
 		os.Exit(1)
 	}
 }
 
 func run(args []string) error {
-	fs := flag.NewFlagSet("go-rdmanet_lat", flag.ContinueOnError)
+	fs := flag.NewFlagSet("go_rdmanet_lat", flag.ContinueOnError)
 	var (
 		device   = fs.String("d", "", "RDMA device name (default: first available)")
 		port     = fs.Int("i", 1, "HCA port number")
@@ -79,7 +79,7 @@ func runServerLat(addr string, size, iters int, opts []rdmanet.Option) error {
 		return err
 	}
 	defer func() { _ = ln.Close() }()
-	fmt.Printf("go-rdmanet_lat server listening on %s\n", ln.Addr())
+	fmt.Printf("go_rdmanet_lat server listening on %s\n", ln.Addr())
 	conn, err := ln.Accept()
 	if err != nil {
 		return err

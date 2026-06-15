@@ -1,4 +1,4 @@
-// Command go-read_lat is a Go reimplementation of perftest's ib_read_lat: it
+// Command go_read_lat is a Go reimplementation of perftest's ib_read_lat: it
 // measures RDMA Read latency. Each RDMA Read is itself a round trip, so the
 // latency is the time from posting the read to its completion.
 //
@@ -15,16 +15,16 @@ import (
 )
 
 func main() {
-	cfg, err := perftest.ParseArgs("go-read_lat", os.Args[1:], os.Stderr)
+	cfg, err := perftest.ParseArgs("go_read_lat", os.Args[1:], os.Stderr)
 	if err != nil {
 		os.Exit(2)
 	}
 	if err := cfg.RequireOneSidedTCP(); err != nil {
-		fmt.Fprintf(os.Stderr, "go-read_lat: %v\n", err)
+		fmt.Fprintf(os.Stderr, "go_read_lat: %v\n", err)
 		os.Exit(2)
 	}
 	if err := run(cfg); err != nil {
-		fmt.Fprintf(os.Stderr, "go-read_lat: %v\n", err)
+		fmt.Fprintf(os.Stderr, "go_read_lat: %v\n", err)
 		os.Exit(1)
 	}
 }

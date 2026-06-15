@@ -9,7 +9,7 @@ import (
 
 func TestParseArgsDefaults(t *testing.T) {
 	var out bytes.Buffer
-	cfg, err := ParseArgs("go-send_bw", nil, &out)
+	cfg, err := ParseArgs("go_send_bw", nil, &out)
 	if err != nil {
 		t.Fatalf("ParseArgs: %v", err)
 	}
@@ -30,7 +30,7 @@ func TestParseArgsDefaults(t *testing.T) {
 func TestParseArgsClientAndFlags(t *testing.T) {
 	var out bytes.Buffer
 	args := []string{"-s", "1024", "-n", "5000", "-c", "UD", "-R", "-t", "256", "-x", "3", "--output", "histogram", "10.0.0.2:18515"}
-	cfg, err := ParseArgs("go-send_lat", args, &out)
+	cfg, err := ParseArgs("go_send_lat", args, &out)
 	if err != nil {
 		t.Fatalf("ParseArgs: %v", err)
 	}

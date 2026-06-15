@@ -1,4 +1,4 @@
-// Command go-write_bw is a Go reimplementation of perftest's ib_write_bw: it
+// Command go_write_bw is a Go reimplementation of perftest's ib_write_bw: it
 // measures one-sided RDMA Write bandwidth. The client writes into the server's
 // registered buffer using the RKey/remote address exchanged out-of-band.
 //
@@ -15,16 +15,16 @@ import (
 )
 
 func main() {
-	cfg, err := perftest.ParseArgs("go-write_bw", os.Args[1:], os.Stderr)
+	cfg, err := perftest.ParseArgs("go_write_bw", os.Args[1:], os.Stderr)
 	if err != nil {
 		os.Exit(2)
 	}
 	if err := cfg.RequireOneSidedTCP(); err != nil {
-		fmt.Fprintf(os.Stderr, "go-write_bw: %v\n", err)
+		fmt.Fprintf(os.Stderr, "go_write_bw: %v\n", err)
 		os.Exit(2)
 	}
 	if err := run(cfg); err != nil {
-		fmt.Fprintf(os.Stderr, "go-write_bw: %v\n", err)
+		fmt.Fprintf(os.Stderr, "go_write_bw: %v\n", err)
 		os.Exit(1)
 	}
 }

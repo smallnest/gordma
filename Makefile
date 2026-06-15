@@ -6,7 +6,7 @@
 #   - hardware-dependent (integration): require a real RDMA NIC on Linux with
 #     libibverbs/librdmacm; these are opt-in and never run by default.
 
-# Strip any directory path from the module so binaries are named go-send_bw etc.
+# Strip any directory path from the module so binaries are named go_send_bw etc.
 MODULE      := github.com/smallnest/gordma
 BIN_DIR     := bin
 CMDS        := $(notdir $(wildcard cmd/*))

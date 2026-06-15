@@ -17,7 +17,7 @@ Module path: `github.com/smallnest/gordma`.
 
 Work in progress. The library exposes the core verbs object model (Device,
 Context, PD, MR, CQ, QP, AH, CompChannel) and a set of `cmd/` tools
-(`go-send_bw/lat`, `go-write_bw/lat`, `go-read_bw/lat`).
+(`go_send_bw/lat`, `go_write_bw/lat`, `go_read_bw/lat`).
 
 ## Requirements
 
@@ -130,7 +130,7 @@ Connection establishment uses rdma_cm by default, or the TCP handshake with
 lowest latency). Batch (`SendBatch`/`RecvBatch`), zero-copy
 (`AllocBuffer`/`SendBuffer`), and an optional UD address registry
 (`NewRegistry`/`LookupAddr`) are also provided. See `examples/` for runnable
-samples and the `go-rdmanet_bw`/`go-rdmanet_lat` tools for benchmarks.
+samples and the `go_rdmanet_bw`/`go_rdmanet_lat` tools for benchmarks.
 
 
 ## Tools
@@ -140,12 +140,12 @@ Each runs as a **server** (no peer address) or **client** (peer address):
 
 | Tool | Mirrors | Transport | Connect |
 |------|---------|-----------|---------|
-| `go-send_bw`  | `ib_send_bw`  | RC, UD | TCP or rdma_cm |
-| `go-send_lat` | `ib_send_lat` | RC, UD | TCP or rdma_cm |
-| `go-write_bw` | `ib_write_bw` | RC     | TCP |
-| `go-write_lat`| `ib_write_lat`| RC     | TCP |
-| `go-read_bw`  | `ib_read_bw`  | RC     | TCP |
-| `go-read_lat` | `ib_read_lat` | RC     | TCP |
+| `go_send_bw`  | `ib_send_bw`  | RC, UD | TCP or rdma_cm |
+| `go_send_lat` | `ib_send_lat` | RC, UD | TCP or rdma_cm |
+| `go_write_bw` | `ib_write_bw` | RC     | TCP |
+| `go_write_lat`| `ib_write_lat`| RC     | TCP |
+| `go_read_bw`  | `ib_read_bw`  | RC     | TCP |
+| `go_read_lat` | `ib_read_lat` | RC     | TCP |
 
 Common flags: `-s` size, `-n` iterations, `-d` device, `-i` HCA port,
 `-p` TCP handshake port, `-c RC|UD`, `-R` (use rdma_cm), `-t` tx-depth
@@ -156,12 +156,12 @@ go build -o bin/ ./cmd/...
 
 # Two nodes, both using device mlx5_3 and RoCE v2 GID index 3 (-d mlx5_3 -x 3).
 # On the server node (e.g. 10.0.0.1):
-./bin/go-send_bw -s 65536 -n 5000 -d mlx5_3 -x 3
+./bin/go_send_bw -s 65536 -n 5000 -d mlx5_3 -x 3
 # On the client node, pointing at the server:
-./bin/go-send_bw -s 65536 -n 5000 -d mlx5_3 -x 3 10.0.0.1:18515
+./bin/go_send_bw -s 65536 -n 5000 -d mlx5_3 -x 3 10.0.0.1:18515
 
 # Latency with a full histogram (client side):
-./bin/go-send_lat -d mlx5_3 -x 3 --output=histogram 10.0.0.1:18515
+./bin/go_send_lat -d mlx5_3 -x 3 --output=histogram 10.0.0.1:18515
 ```
 
 ## Testing & CI

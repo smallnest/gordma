@@ -1,4 +1,4 @@
-// Command go-rdmanet_bw measures message bandwidth over the rdmanet high-level
+// Command go_rdmanet_bw measures message bandwidth over the rdmanet high-level
 // API (in contrast to the lower-level perftest tools). Run without an address
 // to act as the server (echoes/receives); pass the server address to act as the
 // client (sends).
@@ -18,13 +18,13 @@ import (
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintf(os.Stderr, "go-rdmanet_bw: %v\n", err)
+		fmt.Fprintf(os.Stderr, "go_rdmanet_bw: %v\n", err)
 		os.Exit(1)
 	}
 }
 
 func run(args []string) error {
-	fs := flag.NewFlagSet("go-rdmanet_bw", flag.ContinueOnError)
+	fs := flag.NewFlagSet("go_rdmanet_bw", flag.ContinueOnError)
 	var (
 		device   = fs.String("d", "", "RDMA device name (default: first available)")
 		port     = fs.Int("i", 1, "HCA port number")
@@ -81,7 +81,7 @@ func runServerBW(addr string, size, iters int, opts []rdmanet.Option) error {
 		return err
 	}
 	defer func() { _ = ln.Close() }()
-	fmt.Printf("go-rdmanet_bw server listening on %s\n", ln.Addr())
+	fmt.Printf("go_rdmanet_bw server listening on %s\n", ln.Addr())
 	conn, err := ln.Accept()
 	if err != nil {
 		return err
