@@ -9,17 +9,20 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"log"
 
 	"github.com/smallnest/gordma"
 	"github.com/smallnest/gordma/rdmanet"
+	flag "github.com/spf13/pflag"
+)
+
+var (
+	device   = flag.StringP("device", "d", "mlx5_1", "RDMA device (mlx5_0=CPU/xgbe0, mlx5_1..8=GPU/xgbe1..8)")
+	gidIndex = flag.IntP("gid-index", "x", 3, "GID index (RoCE v2)")
 )
 
 func main() {
-	device := flag.String("d", "mlx5_1", "RDMA device (mlx5_0=CPU/xgbe0, mlx5_1..8=GPU/xgbe1..8)")
-	gidIndex := flag.Int("x", 3, "GID index (RoCE v2)")
 	flag.Parse()
 	if !gordma.Supported() {
 		fmt.Println("RDMA not supported on this platform:", gordma.ErrNotSupported)

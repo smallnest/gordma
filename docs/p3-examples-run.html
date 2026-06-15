@@ -61,7 +61,7 @@ go run ./examples/echo-msg 10.214.180.34:18515 -d mlx5_0</code></pre>
       <p>注意 <code>registry</code> / <code>ud-broadcast</code> 里的<strong>注册表服务</strong>是纯 Go（不碰 RDMA），
         可以在任意机器上单独起，用来做 UD 地址发现：</p>
       <pre><code><span class="c"># 注册表（纯 Go，无需 RDMA）</span>
-go run ./examples/registry -registry 0.0.0.0:9100</code></pre>
+go run ./examples/registry --registry 0.0.0.0:9100</code></pre>
 
       <div class="callout tip">
         <span class="tag">下一步</span>

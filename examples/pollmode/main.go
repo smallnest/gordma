@@ -1,27 +1,30 @@
 // Command pollmode shows selecting the CQ poll mode (busy vs event) via
-// WithPollMode. Pass -poll=busy or -poll=event.
+// WithPollMode. Pass --poll=busy or --poll=event.
 //
-//	server: go run . -l :18515 -poll=busy
-//	client: go run . 33.0.226.25:18515 -poll=event
+//	server: go run . -l :18515 --poll=busy
+//	client: go run . 33.0.226.25:18515 --poll=event
 //
 // Defaults target the first GPU NIC: device mlx5_1 (GPU net xgbe1) and
 // RoCE v2 GID index 3. Override with -d / -x (use -d mlx5_0 for CPU xgbe0).
 package main
 
 import (
-	"flag"
 	"fmt"
 	"log"
 
 	"github.com/smallnest/gordma"
 	"github.com/smallnest/gordma/rdmanet"
+	flag "github.com/spf13/pflag"
+)
+
+var (
+	listen   = flag.StringP("listen", "l", "", "listen address (server mode)")
+	poll     = flag.String("poll", "event", "CQ poll mode: busy|event")
+	device   = flag.StringP("device", "d", "mlx5_1", "RDMA device (mlx5_0=CPU/xgbe0, mlx5_1..8=GPU/xgbe1..8)")
+	gidIndex = flag.IntP("gid-index", "x", 3, "GID index (RoCE v2)")
 )
 
 func main() {
-	listen := flag.String("l", "", "listen address (server mode)")
-	poll := flag.String("poll", "event", "CQ poll mode: busy|event")
-	device := flag.String("d", "mlx5_1", "RDMA device (mlx5_0=CPU/xgbe0, mlx5_1..8=GPU/xgbe1..8)")
-	gidIndex := flag.Int("x", 3, "GID index (RoCE v2)")
 	flag.Parse()
 	if !gordma.Supported() {
 		fmt.Println("RDMA not supported on this platform:", gordma.ErrNotSupported)
@@ -44,7 +47,7 @@ func main() {
 	} else if flag.NArg() > 0 {
 		err = client(flag.Arg(0), opts)
 	} else {
-		log.Fatal("usage: pollmode -l :PORT [-poll=busy|event] | pollmode HOST:PORT [-poll=...]")
+		log.Fatal("usage: pollmode -l :PORT [--poll=busy|event] | pollmode HOST:PORT [--poll=...]")
 	}
 	if err != nil {
 		log.Fatal(err)

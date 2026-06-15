@@ -8,12 +8,12 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"os"
 	"time"
 
 	"github.com/smallnest/gordma/rdmanet"
+	flag "github.com/spf13/pflag"
 )
 
 func main() {
@@ -26,12 +26,12 @@ func main() {
 func run(args []string) error {
 	fs := flag.NewFlagSet("go_rdmanet_bw", flag.ContinueOnError)
 	var (
-		device   = fs.String("d", "", "RDMA device name (default: first available)")
-		port     = fs.Int("i", 1, "HCA port number")
-		gidIndex = fs.Int("x", 0, "GID index (RoCE v2)")
-		size     = fs.Int("s", 65536, "message size in bytes")
-		iters    = fs.Int("n", 1000, "number of messages")
-		tcpPort  = fs.Int("p", 18515, "TCP listen/connect port for establishment")
+		device   = fs.StringP("device", "d", "", "RDMA device name (default: first available)")
+		port     = fs.IntP("ib-port", "i", 1, "HCA port number")
+		gidIndex = fs.IntP("gid-index", "x", 0, "GID index (RoCE v2)")
+		size     = fs.IntP("size", "s", 65536, "message size in bytes")
+		iters    = fs.IntP("count", "n", 1000, "number of messages")
+		tcpPort  = fs.IntP("tcp-port", "p", 18515, "TCP listen/connect port for establishment")
 		handshk  = fs.Bool("handshake", false, "use TCP out-of-band handshake instead of rdma_cm")
 		pollMode = fs.String("poll", "event", "CQ poll mode: busy|event")
 	)

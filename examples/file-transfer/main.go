@@ -2,15 +2,14 @@
 // plain io.ReadWriteCloser (io.Copy), demonstrating the byte-stream adapter for
 // bulk transfers with a graceful EOF.
 //
-//	server: go run . -l :18515 -out received.bin
-//	client: go run . 33.0.226.25:18515 -in payload.bin
+//	server: go run . -l :18515 --out received.bin
+//	client: go run . 33.0.226.25:18515 --in payload.bin
 //
 // Defaults target the first GPU NIC: device mlx5_1 (GPU net xgbe1) and
 // RoCE v2 GID index 3. Override with -d / -x (use -d mlx5_0 for CPU xgbe0).
 package main
 
 import (
-	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -18,14 +17,18 @@ import (
 
 	"github.com/smallnest/gordma"
 	"github.com/smallnest/gordma/rdmanet"
+	flag "github.com/spf13/pflag"
+)
+
+var (
+	listen   = flag.StringP("listen", "l", "", "listen address (server mode)")
+	out      = flag.String("out", "received.bin", "server: output file path")
+	in       = flag.String("in", "", "client: input file path to send")
+	device   = flag.StringP("device", "d", "mlx5_1", "RDMA device (mlx5_0=CPU/xgbe0, mlx5_1..8=GPU/xgbe1..8)")
+	gidIndex = flag.IntP("gid-index", "x", 3, "GID index (RoCE v2)")
 )
 
 func main() {
-	listen := flag.String("l", "", "listen address (server mode)")
-	out := flag.String("out", "received.bin", "server: output file path")
-	in := flag.String("in", "", "client: input file path to send")
-	device := flag.String("d", "mlx5_1", "RDMA device (mlx5_0=CPU/xgbe0, mlx5_1..8=GPU/xgbe1..8)")
-	gidIndex := flag.Int("x", 3, "GID index (RoCE v2)")
 	flag.Parse()
 	if !gordma.Supported() {
 		fmt.Println("RDMA not supported on this platform:", gordma.ErrNotSupported)
@@ -38,7 +41,7 @@ func main() {
 	} else if flag.NArg() > 0 {
 		err = client(flag.Arg(0), *in, opts)
 	} else {
-		log.Fatal("usage: file-transfer -l :PORT -out FILE | file-transfer HOST:PORT -in FILE")
+		log.Fatal("usage: file-transfer -l :PORT --out FILE | file-transfer HOST:PORT --in FILE")
 	}
 	if err != nil {
 		log.Fatal(err)

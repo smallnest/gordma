@@ -7,33 +7,36 @@
 //
 // Flags map 1:1 to options:
 //
-//	-d        WithDevice      which NIC (mlx5_0=CPU/xgbe0, mlx5_1..8=GPU/xgbe1..8)
-//	-i        WithPort        HCA port number (usually 1)
-//	-x        WithGIDIndex    GID table index (RoCE v2 = 3 here)
-//	-depth    WithQueueDepth  outstanding WRs / flow-control credits
-//	-buf      WithBufferSize  per-frame bounce slot bytes (KiB)
-//	-poll     WithPollMode    event (low CPU) | busy (low latency)
-//	-handshake WithHandshake  TCP out-of-band establishment instead of rdma_cm
+//	-d         WithDevice      which NIC (mlx5_0=CPU/xgbe0, mlx5_1..8=GPU/xgbe1..8)
+//	-i         WithPort        HCA port number (usually 1)
+//	-x         WithGIDIndex    GID table index (RoCE v2 = 3 here)
+//	--depth    WithQueueDepth  outstanding WRs / flow-control credits
+//	--buf      WithBufferSize  per-frame bounce slot bytes (KiB)
+//	--poll     WithPollMode    event (low CPU) | busy (low latency)
+//	--handshake WithHandshake  TCP out-of-band establishment instead of rdma_cm
 package main
 
 import (
-	"flag"
 	"fmt"
 	"log"
 
 	"github.com/smallnest/gordma"
 	"github.com/smallnest/gordma/rdmanet"
+	flag "github.com/spf13/pflag"
+)
+
+var (
+	listen    = flag.StringP("listen", "l", "", "listen address (server mode)")
+	device    = flag.StringP("device", "d", "mlx5_1", "WithDevice: NIC (mlx5_0=CPU/xgbe0, mlx5_1..8=GPU/xgbe1..8)")
+	port      = flag.IntP("ib-port", "i", 1, "WithPort: HCA port number")
+	gidIndex  = flag.IntP("gid-index", "x", 3, "WithGIDIndex: GID table index (RoCE v2)")
+	depth     = flag.Int("depth", 128, "WithQueueDepth: outstanding WRs / credits")
+	bufKiB    = flag.Int("buf", 64, "WithBufferSize: per-frame bounce slot (KiB)")
+	poll      = flag.String("poll", "event", "WithPollMode: event|busy")
+	handshake = flag.Bool("handshake", false, "WithHandshake: TCP out-of-band establishment")
 )
 
 func main() {
-	listen := flag.String("l", "", "listen address (server mode)")
-	device := flag.String("d", "mlx5_1", "WithDevice: NIC (mlx5_0=CPU/xgbe0, mlx5_1..8=GPU/xgbe1..8)")
-	port := flag.Int("i", 1, "WithPort: HCA port number")
-	gidIndex := flag.Int("x", 3, "WithGIDIndex: GID table index (RoCE v2)")
-	depth := flag.Int("depth", 128, "WithQueueDepth: outstanding WRs / credits")
-	bufKiB := flag.Int("buf", 64, "WithBufferSize: per-frame bounce slot (KiB)")
-	poll := flag.String("poll", "event", "WithPollMode: event|busy")
-	handshake := flag.Bool("handshake", false, "WithHandshake: TCP out-of-band establishment")
 	flag.Parse()
 	if !gordma.Supported() {
 		fmt.Println("RDMA not supported on this platform:", gordma.ErrNotSupported)

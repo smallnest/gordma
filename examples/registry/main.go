@@ -2,30 +2,33 @@
 // registers its Addr under a name, and a client looks it up to send a datagram
 // — no manual Addr copy-paste.
 //
-//	registry: go run . -registry :9100
-//	server:   go run . -r 10.214.180.34:9100 -name nodeA
-//	client:   go run . -r 10.214.180.34:9100 -name nodeA -send
+//	registry: go run . --registry :9100
+//	server:   go run . -r 10.214.180.34:9100 --name nodeA
+//	client:   go run . -r 10.214.180.34:9100 --name nodeA --send
 //
 // Defaults target the first GPU NIC: device mlx5_1 (GPU net xgbe1) and
 // RoCE v2 GID index 3. Override with -d / -x (use -d mlx5_0 for CPU xgbe0).
 package main
 
 import (
-	"flag"
 	"fmt"
 	"log"
 
 	"github.com/smallnest/gordma"
 	"github.com/smallnest/gordma/rdmanet"
+	flag "github.com/spf13/pflag"
+)
+
+var (
+	reg      = flag.String("registry", "", "run a registry server on this address")
+	regAddr  = flag.StringP("registry-addr", "r", "", "registry address to use")
+	name     = flag.String("name", "node", "name to register/lookup")
+	send     = flag.Bool("send", false, "client mode: look up name and send to it")
+	device   = flag.StringP("device", "d", "mlx5_1", "RDMA device (mlx5_0=CPU/xgbe0, mlx5_1..8=GPU/xgbe1..8)")
+	gidIndex = flag.IntP("gid-index", "x", 3, "GID index (RoCE v2)")
 )
 
 func main() {
-	reg := flag.String("registry", "", "run a registry server on this address")
-	regAddr := flag.String("r", "", "registry address to use")
-	name := flag.String("name", "node", "name to register/lookup")
-	send := flag.Bool("send", false, "client mode: look up name and send to it")
-	device := flag.String("d", "mlx5_1", "RDMA device (mlx5_0=CPU/xgbe0, mlx5_1..8=GPU/xgbe1..8)")
-	gidIndex := flag.Int("x", 3, "GID index (RoCE v2)")
 	flag.Parse()
 
 	if *reg != "" {

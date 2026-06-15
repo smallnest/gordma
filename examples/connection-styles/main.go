@@ -1,37 +1,40 @@
 // Command connection-styles demonstrates the connection establishment methods
-// rdmanet offers side by side, selected with -mode:
+// rdmanet offers side by side, selected with --mode:
 //
 //	rc-cm        RC via the RDMA connection manager (rdma_cm) — the default
 //	rc-handshake RC via the TCP out-of-band handshake (WithHandshake)
 //	ud           UD datagrams (connectionless; address peers by Addr string)
 //
-// Run a server and a client with the same -mode.
+// Run a server and a client with the same --mode.
 //
 //	rc-cm / rc-handshake:
-//	  server: go run . -mode rc-cm -l :18515
-//	  client: go run . -mode rc-cm 33.0.226.25:18515
+//	  server: go run . --mode rc-cm -l :18515
+//	  client: go run . --mode rc-cm 33.0.226.25:18515
 //	ud:
-//	  server: go run . -mode ud
-//	  client: go run . -mode ud '<server-addr-string>'
+//	  server: go run . --mode ud
+//	  client: go run . --mode ud '<server-addr-string>'
 //
 // Defaults target the first GPU NIC: device mlx5_1 (GPU net xgbe1) and
 // RoCE v2 GID index 3. Override with -d / -x (use -d mlx5_0 for CPU xgbe0).
 package main
 
 import (
-	"flag"
 	"fmt"
 	"log"
 
 	"github.com/smallnest/gordma"
 	"github.com/smallnest/gordma/rdmanet"
+	flag "github.com/spf13/pflag"
+)
+
+var (
+	mode     = flag.String("mode", "rc-cm", "connection style: rc-cm | rc-handshake | ud")
+	listen   = flag.StringP("listen", "l", "", "listen address (RC server mode)")
+	device   = flag.StringP("device", "d", "mlx5_1", "RDMA device (mlx5_0=CPU/xgbe0, mlx5_1..8=GPU/xgbe1..8)")
+	gidIndex = flag.IntP("gid-index", "x", 3, "GID index (RoCE v2)")
 )
 
 func main() {
-	mode := flag.String("mode", "rc-cm", "connection style: rc-cm | rc-handshake | ud")
-	listen := flag.String("l", "", "listen address (RC server mode)")
-	device := flag.String("d", "mlx5_1", "RDMA device (mlx5_0=CPU/xgbe0, mlx5_1..8=GPU/xgbe1..8)")
-	gidIndex := flag.Int("x", 3, "GID index (RoCE v2)")
 	flag.Parse()
 	if !gordma.Supported() {
 		fmt.Println("RDMA not supported on this platform:", gordma.ErrNotSupported)
@@ -48,7 +51,7 @@ func main() {
 	case "ud":
 		err = runUD(flagArg(), opts)
 	default:
-		log.Fatalf("unknown -mode %q (want rc-cm|rc-handshake|ud)", *mode)
+		log.Fatalf("unknown --mode %q (want rc-cm|rc-handshake|ud)", *mode)
 	}
 	if err != nil {
 		log.Fatal(err)

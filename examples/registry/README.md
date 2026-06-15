@@ -6,13 +6,13 @@ copy-paste.
 
 ```sh
 # 1. registry server (pure Go, no RDMA needed)
-go run . -registry 0.0.0.0:9100
+go run . --registry 0.0.0.0:9100
 
 # 2. UD server registers under "nodeA"
-go run . -r 127.0.0.1:9100 -name nodeA
+go run . -r 127.0.0.1:9100 --name nodeA
 
 # 3. client looks up "nodeA" and sends to it
-go run . -r 127.0.0.1:9100 -name nodeA -send
+go run . -r 127.0.0.1:9100 --name nodeA --send
 # nodeA -> got "hello via registry"
 ```
 

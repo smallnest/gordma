@@ -75,7 +75,7 @@ go run ./examples/packet 'fe80:0000:...:0001%0x1a2b'</code></pre>
         注册表服务本身是纯 Go，无需 RDMA，可单独起。</p>
 
       <h3>pollmode —— 轮询模式</h3>
-      <p>用 <code>-poll=busy|event</code> 切换 CQ 排空策略，直观对比延迟与 CPU 占用（见
+      <p>用 <code>--poll=busy|event</code> 切换 CQ 排空策略，直观对比延迟与 CPU 占用（见
         <a href="p2-perf.html">性能选项</a>的权衡）。</p>
 
       <div class="callout tip">

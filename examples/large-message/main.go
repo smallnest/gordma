@@ -3,7 +3,7 @@
 // tuning via WithBufferSize/WithQueueDepth.
 //
 //	server: go run . -l :18515
-//	client: go run . 33.0.226.25:18515 -size 16
+//	client: go run . 33.0.226.25:18515 --size 16
 //
 // Defaults target the first GPU NIC: device mlx5_1 (GPU net xgbe1) and
 // RoCE v2 GID index 3. Override with -d / -x (use -d mlx5_0 for CPU xgbe0).
@@ -12,21 +12,24 @@ package main
 import (
 	"bytes"
 	"crypto/sha256"
-	"flag"
 	"fmt"
 	"log"
 
 	"github.com/smallnest/gordma"
 	"github.com/smallnest/gordma/rdmanet"
+	flag "github.com/spf13/pflag"
+)
+
+var (
+	listen   = flag.StringP("listen", "l", "", "listen address (server mode)")
+	sizeMiB  = flag.Int("size", 16, "client: message size in MiB")
+	bufKiB   = flag.Int("buf", 256, "per-frame bounce buffer size in KiB")
+	depth    = flag.Int("depth", 256, "send/recv queue depth")
+	device   = flag.StringP("device", "d", "mlx5_1", "RDMA device (mlx5_0=CPU/xgbe0, mlx5_1..8=GPU/xgbe1..8)")
+	gidIndex = flag.IntP("gid-index", "x", 3, "GID index (RoCE v2)")
 )
 
 func main() {
-	listen := flag.String("l", "", "listen address (server mode)")
-	sizeMiB := flag.Int("size", 16, "client: message size in MiB")
-	bufKiB := flag.Int("buf", 256, "per-frame bounce buffer size in KiB")
-	depth := flag.Int("depth", 256, "send/recv queue depth")
-	device := flag.String("d", "mlx5_1", "RDMA device (mlx5_0=CPU/xgbe0, mlx5_1..8=GPU/xgbe1..8)")
-	gidIndex := flag.Int("x", 3, "GID index (RoCE v2)")
 	flag.Parse()
 	if !gordma.Supported() {
 		fmt.Println("RDMA not supported on this platform:", gordma.ErrNotSupported)
@@ -44,7 +47,7 @@ func main() {
 	} else if flag.NArg() > 0 {
 		err = client(flag.Arg(0), *sizeMiB, opts)
 	} else {
-		log.Fatal("usage: large-message -l :PORT | large-message HOST:PORT -size 16")
+		log.Fatal("usage: large-message -l :PORT | large-message HOST:PORT --size 16")
 	}
 	if err != nil {
 		log.Fatal(err)

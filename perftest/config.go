@@ -6,9 +6,10 @@
 package perftest
 
 import (
-	"flag"
 	"fmt"
 	"io"
+
+	flag "github.com/spf13/pflag"
 )
 
 // ConnMethod selects how the two endpoints establish their connection.
@@ -137,18 +138,18 @@ func ParseArgs(toolName string, args []string, out io.Writer) (Config, error) {
 	fs := flag.NewFlagSet(toolName, flag.ContinueOnError)
 	fs.SetOutput(out)
 
-	fs.IntVar(&cfg.Size, "s", cfg.Size, "message size in bytes")
-	fs.IntVar(&cfg.Iters, "n", cfg.Iters, "number of iterations")
-	fs.StringVar(&cfg.Device, "d", cfg.Device, "RDMA device name (default: first)")
-	fs.IntVar(&cfg.IBPort, "i", cfg.IBPort, "HCA port number (1-based)")
-	fs.IntVar(&cfg.TCPPort, "p", cfg.TCPPort, "TCP port for out-of-band handshake")
-	fs.IntVar(&cfg.TxDepth, "t", cfg.TxDepth, "tx depth (outstanding send WRs)")
-	fs.IntVar(&cfg.GIDIndex, "x", cfg.GIDIndex, "GID index")
+	fs.IntVarP(&cfg.Size, "size", "s", cfg.Size, "message size in bytes")
+	fs.IntVarP(&cfg.Iters, "count", "n", cfg.Iters, "number of iterations")
+	fs.StringVarP(&cfg.Device, "device", "d", cfg.Device, "RDMA device name (default: first)")
+	fs.IntVarP(&cfg.IBPort, "ib-port", "i", cfg.IBPort, "HCA port number (1-based)")
+	fs.IntVarP(&cfg.TCPPort, "tcp-port", "p", cfg.TCPPort, "TCP port for out-of-band handshake")
+	fs.IntVarP(&cfg.TxDepth, "tx-depth", "t", cfg.TxDepth, "tx depth (outstanding send WRs)")
+	fs.IntVarP(&cfg.GIDIndex, "gid-index", "x", cfg.GIDIndex, "GID index")
 
 	var transport string
-	fs.StringVar(&transport, "c", "RC", "connection transport: RC or UD")
+	fs.StringVarP(&transport, "transport", "c", "RC", "connection transport: RC or UD")
 	var useCM bool
-	fs.BoolVar(&useCM, "R", false, "use rdma_cm for connection establishment")
+	fs.BoolVarP(&useCM, "rdma-cm", "R", false, "use rdma_cm for connection establishment")
 	var output string
 	fs.StringVar(&output, "output", "", "extra output mode; set to 'histogram' for full latency histogram")
 

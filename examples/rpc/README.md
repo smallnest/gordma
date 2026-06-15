@@ -7,7 +7,7 @@ uppercases the request. When the client closes, the server's `RecvMsg` returns
 
 ```sh
 go run . -l 0.0.0.0:18515                  # server
-go run . 33.0.226.25:18515 -req hello -n 3   # client
+go run . 33.0.226.25:18515 --req hello -n 3   # client
 # -> reply: HELLO-0
 #    reply: HELLO-1
 #    reply: HELLO-2

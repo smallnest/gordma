@@ -3,14 +3,13 @@
 // SendMsg. It demonstrates a simple one-question-one-answer pattern over RC.
 //
 //	server: go run . -l :18515
-//	client: go run . 33.0.226.25:18515 -req "ping"
+//	client: go run . 33.0.226.25:18515 --req "ping"
 //
 // Defaults target the first GPU NIC: device mlx5_1 (GPU net xgbe1) and
 // RoCE v2 GID index 3. Override with -d / -x (use -d mlx5_0 for CPU xgbe0).
 package main
 
 import (
-	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -18,14 +17,18 @@ import (
 
 	"github.com/smallnest/gordma"
 	"github.com/smallnest/gordma/rdmanet"
+	flag "github.com/spf13/pflag"
+)
+
+var (
+	listen   = flag.StringP("listen", "l", "", "listen address (server mode)")
+	req      = flag.String("req", "ping", "client: request payload")
+	n        = flag.IntP("count", "n", 3, "client: number of requests to send")
+	device   = flag.StringP("device", "d", "mlx5_1", "RDMA device (mlx5_0=CPU/xgbe0, mlx5_1..8=GPU/xgbe1..8)")
+	gidIndex = flag.IntP("gid-index", "x", 3, "GID index (RoCE v2)")
 )
 
 func main() {
-	listen := flag.String("l", "", "listen address (server mode)")
-	req := flag.String("req", "ping", "client: request payload")
-	n := flag.Int("n", 3, "client: number of requests to send")
-	device := flag.String("d", "mlx5_1", "RDMA device (mlx5_0=CPU/xgbe0, mlx5_1..8=GPU/xgbe1..8)")
-	gidIndex := flag.Int("x", 3, "GID index (RoCE v2)")
 	flag.Parse()
 	if !gordma.Supported() {
 		fmt.Println("RDMA not supported on this platform:", gordma.ErrNotSupported)
@@ -38,7 +41,7 @@ func main() {
 	} else if flag.NArg() > 0 {
 		err = client(flag.Arg(0), *req, *n, opts)
 	} else {
-		log.Fatal("usage: rpc -l :PORT | rpc HOST:PORT -req MSG -n N")
+		log.Fatal("usage: rpc -l :PORT | rpc HOST:PORT --req MSG -n N")
 	}
 	if err != nil {
 		log.Fatal(err)

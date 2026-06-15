@@ -30,7 +30,7 @@
           <tr><td><code>large-message</code></td><td>多 MiB 大消息：分片/重组 + 完整性校验</td></tr>
           <tr><td><code>rpc</code></td><td>请求/响应循环（<code>RecvMsg</code>→处理→<code>SendMsg</code>）</td></tr>
           <tr><td><code>chat</code></td><td>全双工：并发的发送/接收 goroutine 共用一个 <code>Conn</code></td></tr>
-          <tr><td><code>connection-styles</code></td><td>一个 <code>-mode</code> 开关切换 rc-cm / rc-handshake / ud</td></tr>
+          <tr><td><code>connection-styles</code></td><td>一个 <code>--mode</code> 开关切换 rc-cm / rc-handshake / ud</td></tr>
           <tr><td><code>multi-client</code></td><td>RC 服务端 <code>Accept</code> 循环服务多个客户端</td></tr>
           <tr><td><code>ud-broadcast</code></td><td>一个 UD 发送方 → 多个注册表发现的对端（AH 缓存）</td></tr>
           <tr><td><code>bench-throughput</code></td><td><code>SendMsg</code> vs <code>SendBatch</code> 的 Gb/s 自测</td></tr>
@@ -43,14 +43,14 @@
       <h3>file-transfer —— 当成 io.ReadWriteCloser 用</h3>
       <p>客户端 <code>io.Copy</code> 把文件灌进连接，服务端 <code>io.Copy</code> 把连接写进文件。
         关闭客户端连接会发 FIN，服务端的拷贝在 <code>io.EOF</code> 处自然终止。这是字节流适配器最实用的体现。</p>
-      <pre><code>go run ./examples/file-transfer -l 0.0.0.0:18515 -out received.bin  <span class="c"># 服务端</span>
-go run ./examples/file-transfer 33.0.226.25:18515 -in payload.bin  <span class="c"># 客户端</span></code></pre>
+      <pre><code>go run ./examples/file-transfer -l 0.0.0.0:18515 --out received.bin  <span class="c"># 服务端</span>
+go run ./examples/file-transfer 33.0.226.25:18515 --in payload.bin  <span class="c"># 客户端</span></code></pre>
 
       <h3>large-message —— 大消息分片/重组</h3>
       <p>发一条几 MiB 的消息：一次 <code>SendMsg</code> 在信用流控下被透明拆成许多帧，一次 <code>RecvMsg</code> 重组回完整消息、
         边界保留。两端都打印 SHA-256 验证完整性。</p>
       <pre><code>go run ./examples/large-message -l 0.0.0.0:18515
-go run ./examples/large-message 33.0.226.25:18515 -size 16   <span class="c"># 发 16 MiB</span></code></pre>
+go run ./examples/large-message 33.0.226.25:18515 --size 16   <span class="c"># 发 16 MiB</span></code></pre>
 
       <h3>rpc —— 请求/响应</h3>
       <p>客户端发请求并阻塞等回复；服务端循环 <code>RecvMsg → 处理 → SendMsg</code>（示例里把请求转大写）。
@@ -61,9 +61,9 @@ go run ./examples/large-message 33.0.226.25:18515 -size 16   <span class="c"># �
         共用一个 <code>Conn</code>。演示了「一个并发读 + 一个并发写安全」的契约，以及关闭连接唤醒阻塞的 <code>RecvMsg</code>。</p>
 
       <h3>connection-styles —— 三种建连一键切换</h3>
-      <p>一个程序用 <code>-mode</code> 涵盖 <code>rdmanet</code> 的全部建连方式：</p>
+      <p>一个程序用 <code>--mode</code> 涵盖 <code>rdmanet</code> 的全部建连方式：</p>
       <table>
-        <thead><tr><th><code>-mode</code></th><th>传输</th><th>建连</th></tr></thead>
+        <thead><tr><th><code>--mode</code></th><th>传输</th><th>建连</th></tr></thead>
         <tbody>
           <tr><td><code>rc-cm</code>（默认）</td><td>RC 可靠</td><td>rdma_cm</td></tr>
           <tr><td><code>rc-handshake</code></td><td>RC 可靠</td><td>TCP 握手（<code>WithHandshake</code>）</td></tr>
