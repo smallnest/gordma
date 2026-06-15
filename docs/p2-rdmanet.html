@@ -73,6 +73,36 @@ conn.<span class="f">SendMsg</span>([]<span class="k">byte</span>(<span class="s
         （格式 <code>gid%qpn[#qkey]</code>，<code>String()</code>/<code>ResolveAddr</code> 互转）。一条数据报超过路径 MTU 会被
         <strong>拒绝而非截断</strong>。配套的可选 <code>Registry</code> 是个轻量的「名字→Addr」目录，用来带外发现对端。</p>
 
+      <h2>只做双边操作（Send/Recv）</h2>
+      <p>第一部分讲过 RDMA 有<a href="p1-transport.html">双边（Send/Recv）和单边（RDMA Write/Read）</a>两类操作。
+        这里要明确一点：<strong><code>rdmanet</code> 全程只用双边 Send/Recv，不使用单边 Write/Read</strong>。
+        消息、字节流、批量、零拷贝、UD 数据报、内部的信用流控与 FIN，底层投递的工作请求清一色是 <code>OpSend</code>。</p>
+      <p>它的双边模型由三块撑起来：</p>
+      <ul>
+        <li><strong>接收方预挂接收 WR</strong>：连接建好就把所有接收槽 <code>post_recv</code> 挂满，每消费完一帧再补挂回去——保证对端发来时总有落点（否则触发 RNR）。</li>
+        <li><strong>发送方 <code>post_send</code></strong>：所有发送路径都用 <code>Opcode: OpSend</code>。</li>
+        <li><strong>完成分发</strong>：轮询 CQ，按 <code>WCSend</code>/<code>WCRecv</code> 分流——发送完成唤醒发送方，接收完成则解析帧头、交付数据、补挂 recv。</li>
+      </ul>
+      <div class="callout note">
+        <span class="tag">易混点：零拷贝 ≠ 单边</span>
+        <code>AllocBuffer</code>+<code>SendBuffer</code> 的「零拷贝」指的是<strong>省掉到 bounce buffer 的内存拷贝</strong>
+        （用户 MR 直接作为 SGE 被 DMA），它的 <code>Opcode</code> 仍是 <code>OpSend</code>，<strong>依然是双边操作</strong>，
+        不是单边 RDMA Write。
+      </div>
+
+      <h3>为什么不在高层做单边</h3>
+      <p>单边 Write/Read 需要发起方知道「对端哪块内存 + <code>rkey</code>」，这要么得持续交换内存布局，要么得有一套远端缓冲区
+        管理协议，和 <code>rdmanet</code> 想要的「<code>net</code> 风格、保留消息边界、自带流控」语义不搭。
+        双边 Send/Recv 则天然契合消息语义——一次 Send 一个落点，配上信用流控做背压、帧头做大消息分片/重组，
+        正好实现 <code>SendMsg</code>/<code>RecvMsg</code> 这套抽象。</p>
+      <div class="callout tip">
+        <span class="tag">需要单边怎么办</span>
+        想用 RDMA Write/Read，请下沉到底层 <code>gordma</code> 包自己组织：<code>SendWR</code> 里有 <code>Opcode</code>
+        （<code>OpWrite</code>/<code>OpRead</code>）与 <code>RemoteAddr</code>+<code>RKey</code> 字段。
+        参考 <code>perftest/write.go</code> 和 <code>perftest/read.go</code>——它们正是 <code>go_write_*</code> / <code>go_read_*</code>
+        工具背后的单边实现。
+      </div>
+
       <h2>并发约定</h2>
       <div class="callout tip">
         <span class="tag">线程安全</span>

@@ -85,14 +85,12 @@ body {
   text-decoration: none;
   padding: 0.4rem 0.65rem;
   margin-bottom: 0.15rem;
-  border-radius: 7px;
   border-left: 2px solid transparent;
 }
 .nav a.nav-part:hover { background: rgba(217,119,87,0.08); }
 .nav a.nav-part.active {
   background: var(--accent-soft);
   color: var(--accent);
-  border-left-color: var(--accent);
 }
 .nav a.nav-part .caret {
   display: inline-block;
@@ -127,7 +125,6 @@ body {
   background: var(--accent-soft);
   color: var(--accent);
   font-weight: 600;
-  border-left-color: var(--accent);
 }
 .nav .sub a {
   font-size: 0.83rem;
@@ -139,7 +136,6 @@ body {
   background: var(--accent-soft);
   color: var(--accent);
   font-weight: 600;
-  border-left-color: var(--accent);
 }
 
 /* ---------- Typography ---------- */
