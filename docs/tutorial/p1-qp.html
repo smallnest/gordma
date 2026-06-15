@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>gordma · QP 与状态机</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-page="p1-qp">
+<div class="layout">
+  <aside class="sidebar">
+    <a class="brand" href="index.html" style="text-decoration:none">
+      <div class="logo">G</div>
+      <div class="name">gordma</div>
+    </a>
+    <div class="brand-sub">Go 语言 RDMA 网络库 · 教程</div>
+    <nav id="sidebar-nav" class="nav"></nav>
+  </aside>
+  <main class="content">
+    <div class="content-inner">
+      <span class="kicker">第一部分 · 3 / 6</span>
+      <h1>QP 与状态机</h1>
+      <p class="lede"><strong>QP（Queue Pair）是 RDMA 的核心</strong>，相当于 socket 在 RDMA 世界里的对应物。
+        一个 QP 由发送队列(SQ)和接收队列(RQ)组成。但与 socket 不同，QP 要能收发，必须先经过一段
+        <strong>状态机迁移</strong>——这是新手最容易卡住、也最值得理解清楚的一环。</p>
+
+      <h2>QP 是什么</h2>
+      <p>你不会「往 socket 写数据」，而是往 QP 的<strong>发送队列投递工作请求</strong>，网卡异步执行。
+        QP 上还绑定了一个或两个 CQ（发送完成、接收完成可共用一个 CQ）。一个 RC QP 一对一连接一个对端，
+        一个 UD QP 则可以发往多个对端。</p>
+
+      <h2>状态机：RESET → INIT → RTR → RTS</h2>
+      <pre><code>RESET ──▶ INIT ──▶ RTR ──▶ RTS
+                  (Ready    (Ready
+                   To        To
+                   Receive)  Send)</code></pre>
+      <p>每一步迁移都要带上一组参数（用 <code>ibv_modify_qp</code> 设置）。在 gordma 里，这三步迁移就是
+        <code>QP</code> 上的三个方法，对端信息用 <code>RCConnParams</code> 结构体携带：</p>
+      <table>
+        <thead><tr><th>迁移</th><th>关键参数</th><th>gordma 方法</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>RESET → INIT</td>
+            <td>本地端口号、访问权限（<code>AccessFlag</code>）</td>
+            <td><code>qp.ModifyToInit(portNum, access)</code></td>
+          </tr>
+          <tr>
+            <td>INIT → RTR</td>
+            <td><strong>对端</strong> QPN、对端起始 PSN、对端 GID/LID、路径 MTU、跳数限制</td>
+            <td><code>qp.ModifyToRTR(params)</code></td>
+          </tr>
+          <tr>
+            <td>RTR → RTS</td>
+            <td>本地起始 PSN、超时/重试参数</td>
+            <td><code>qp.ModifyToRTS(params)</code></td>
+          </tr>
+        </tbody>
+      </table>
+      <ul>
+        <li><strong>INIT</strong>：QP 初始化好端口和权限，但还不能收发。</li>
+        <li><strong>RTR（Ready to Receive）</strong>：填入了对端寻址信息，可以开始<strong>接收</strong>。</li>
+        <li><strong>RTS（Ready to Send）</strong>：填入本地序列号，可以开始<strong>发送</strong>。</li>
+      </ul>
+
+      <h2>RCConnParams：迁移到 RTR/RTS 需要的对端信息</h2>
+      <p>gordma 把迁移所需的对端参数收拢成一个结构体（节选自 <code>types.go</code>）：</p>
+      <pre><code><span class="k">type</span> <span class="f">RCConnParams</span> <span class="k">struct</span> {
+    DestQPN   <span class="k">uint32</span>  <span class="c">// 对端 QP 号</span>
+    DestPSN   <span class="k">uint32</span>  <span class="c">// 对端起始包序列号（RTR 的 rq_psn）</span>
+    LocalPSN  <span class="k">uint32</span>  <span class="c">// 本地起始包序列号（RTS 的 sq_psn）</span>
+    MTU       <span class="k">int</span>     <span class="c">// 路径 MTU：256/512/1024/2048/4096</span>
+    PortNum   <span class="k">int</span>     <span class="c">// 本地端口号（1 起）</span>
+    IsRoCE    <span class="k">bool</span>    <span class="c">// 选 GID(RoCE) 还是 LID(InfiniBand) 寻址</span>
+    DestLID   <span class="k">uint16</span>  <span class="c">// 对端 LID（InfiniBand）</span>
+    DestGID   GID     <span class="c">// 对端 GID（RoCE）</span>
+    SGIDIndex <span class="k">int</span>     <span class="c">// 本地 GID 表索引（RoCE）</span>
+    HopLimit  <span class="k">uint8</span>   <span class="c">// 全局路由跳数限制，常用 1 或 64</span>
+}</code></pre>
+
+      <h2>先有鸡还是先有蛋</h2>
+      <div class="callout note">
+        <span class="tag">关键洞察</span>
+        迁移到 RTR 需要知道<strong>对端的 QPN / PSN / GID</strong>，但这些信息<strong>没法通过 RDMA 本身交换</strong>
+        ——因为 RDMA 通道还没建立。所以必须先用一条<strong>带外通道</strong>把这些参数交换好。
+      </div>
+      <p>这条带外通道通常是：</p>
+      <ul>
+        <li><strong>普通 TCP</strong>：perftest 默认做法，自己开个 socket 把参数互发。gordma 的 <code>handshake</code> 包做这件事。</li>
+        <li><strong>librdmacm</strong>：RDMA 连接管理器，用类似 socket 的 <code>connect</code>/<code>accept</code> 流程帮你协商，
+          完成后 QP 直接就在 RTS。gordma 的 <code>Dial</code>/<code>Listen</code> 走这条路。</li>
+      </ul>
+      <p>两种方式的细节会在 <a href="p2-connect.html">第二部分 · 两种连接方式</a> 展开。</p>
+
+      <div class="callout tip">
+        <span class="tag">下一步</span>
+        刚才一直说「RC QP」，但 QP 其实有不同传输类型。下一节讲 <a href="p1-transport.html">RC 与 UD 的区别</a>，
+        以及双边 / 单边两类操作。
+      </div>
+
+      <div id="page-nav" class="page-nav"></div>
+      <div class="foot">gordma 教程</div>
+    </div>
+  </main>
+</div>
+<script src="nav.js"></script>
+</body>
+</html>

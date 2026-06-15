@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>gordma · 运行性能测试</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-page="p3-run-cmd">
+<div class="layout">
+  <aside class="sidebar">
+    <a class="brand" href="index.html" style="text-decoration:none">
+      <div class="logo">G</div>
+      <div class="name">gordma</div>
+    </a>
+    <div class="brand-sub">Go 语言 RDMA 网络库 · 教程</div>
+    <nav id="sidebar-nav" class="nav"></nav>
+  </aside>
+  <main class="content">
+    <div class="content-inner">
+      <span class="kicker">第三部分 · 3 / 6</span>
+      <h1>运行性能测试</h1>
+      <p class="lede">一步步把 cmd 工具跑起来。重点说清一个最容易困惑的点：命令里那个 IP 到底是哪张网卡的地址。</p>
+
+      <h2>1. 编译</h2>
+      <p>产物落在 <code>bin/</code>：</p>
+      <pre><code>go build -o bin/ ./cmd/...</code></pre>
+
+      <h2>2. 两节点运行</h2>
+      <p>两节点都用网卡 <code>mlx5_3</code> 和 RoCE v2 GID 索引 3（<code>-d mlx5_3 -x 3</code>）。服务端先起，客户端再连：</p>
+      <pre><code><span class="c"># 服务端 —— 不带地址；监听在 mlx5_3 对应接口上</span>
+./bin/go_send_bw -s 65536 -n 5000 -d mlx5_3 -x 3
+
+<span class="c"># 客户端 —— 地址填服务端 mlx5_3 网卡的 IP（不是管理口 IP）</span>
+./bin/go_send_bw -s 65536 -n 5000 -d mlx5_3 -x 3 10.0.0.1:18515
+
+<span class="c"># 时延 + 完整直方图（客户端侧），同样拨向服务端 mlx5_3 的 IP</span>
+./bin/go_send_lat -d mlx5_3 -x 3 --output=histogram 10.0.0.1:18515</code></pre>
+
+      <h2>命令里的 IP 是哪张网卡的？</h2>
+      <div class="callout note">
+        <span class="tag">关键</span>
+        命令里的 <code>10.0.0.1</code> 是<strong>服务端 <code>-d</code> 选中的那张 RoCE 网卡（<code>mlx5_3</code>，对应接口如 xgbe3）所绑定的 IP</strong>，
+        而<strong>不是</strong>管理口/普通以太网口的 IP。客户端必须拨向它，才能保证两端走在同一张物理 RDMA 网络上。
+      </div>
+      <p>为什么强调这点？RDMA 主机通常有多张网卡：一张管理口（跑 SSH 等普通流量）+ 若干张 RoCE 网卡（CPU 网、GPU 网）。
+        SSH 进去时你用的 IP 往往是管理口，但 RDMA 流量必须走 <code>-d</code> 指定的那张 RoCE 网卡。两者 IP 不同：</p>
+      <table>
+        <thead><tr><th>接口</th><th>设备</th><th>用途</th><th>这里要填的 IP</th></tr></thead>
+        <tbody>
+          <tr><td>管理口 (eth0)</td><td>—</td><td>SSH / 普通流量</td><td>❌ 不是它</td></tr>
+          <tr><td>xgbe0</td><td><code>mlx5_0</code></td><td>CPU RoCE 网</td><td>用 <code>-d mlx5_0</code> 时填它</td></tr>
+          <tr><td>xgbe3</td><td><code>mlx5_3</code></td><td>GPU RoCE 网</td><td>✅ 本例 <code>-d mlx5_3</code> 填它</td></tr>
+        </tbody>
+      </table>
+      <p>确认网卡↔IP 的对应关系：</p>
+      <pre><code><span class="c"># 看接口和它们的 IP</span>
+ip addr
+
+<span class="c"># 看 RDMA 设备和接口的映射（哪张 mlx5_x 对应哪个网口）</span>
+ibdev2netdev
+<span class="c"># 例：mlx5_3 port 1 ==> xgbe3 (Up)，再用 ip addr 查 xgbe3 的 IP</span></code></pre>
+
+      <h2>3. 读结果</h2>
+      <ul>
+        <li><strong>带宽工具</strong>：客户端打印吞吐（Gb/s）；服务端打印 <code>server done</code>。</li>
+        <li><strong>时延工具</strong>：打印往返时延统计；加 <code>--output=histogram</code> 出完整分布。</li>
+      </ul>
+
+      <div class="callout tip">
+        <span class="tag">连不上排查清单</span>
+        <ul style="margin:0.3rem 0 0 1rem">
+          <li>两端 <code>-d</code> / <code>-x</code> 是否都选到对应同一张物理网络、且支持 RoCE v2？</li>
+          <li>客户端地址是否填了服务端<strong>该设备所在接口</strong>的 IP（不是管理口）？</li>
+          <li>用 TCP 握手时（默认），握手端口（<code>-p</code> / 默认 18515）是否互通、没被防火墙挡？</li>
+          <li>端口状态是否 ACTIVE（<code>ibstat</code> 查看）？</li>
+        </ul>
+      </div>
+
+      <div class="callout tip">
+        <span class="tag">下一步</span>
+        工具讲完了，接下来转向更适合「照着抄」的 <a href="p3-examples-run.html">examples 示例</a>。
+      </div>
+
+      <div id="page-nav" class="page-nav"></div>
+      <div class="foot">gordma 教程</div>
+    </div>
+  </main>
+</div>
+<script src="nav.js"></script>
+</body>
+</html>

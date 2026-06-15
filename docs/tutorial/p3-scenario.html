@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>gordma · 场景示例</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-page="p3-scenario">
+<div class="layout">
+  <aside class="sidebar">
+    <a class="brand" href="index.html" style="text-decoration:none">
+      <div class="logo">G</div>
+      <div class="name">gordma</div>
+    </a>
+    <div class="brand-sub">Go 语言 RDMA 网络库 · 教程</div>
+    <nav id="sidebar-nav" class="nav"></nav>
+  </aside>
+  <main class="content">
+    <div class="content-inner">
+      <span class="kicker">第三部分 · 6 / 6</span>
+      <h1>场景示例</h1>
+      <p class="lede">这一组把若干特性组合成更接近真实用法的小程序。读完它们，你基本就能照葫芦画瓢写自己的业务了。</p>
+
+      <h2>速查表</h2>
+      <table>
+        <thead><tr><th>目录</th><th>场景</th></tr></thead>
+        <tbody>
+          <tr><td><code>file-transfer</code></td><td>用 <code>io.Copy</code> 在 <code>Conn</code> 上传文件，优雅处理 EOF</td></tr>
+          <tr><td><code>large-message</code></td><td>多 MiB 大消息：分片/重组 + 完整性校验</td></tr>
+          <tr><td><code>rpc</code></td><td>请求/响应循环（<code>RecvMsg</code>→处理→<code>SendMsg</code>）</td></tr>
+          <tr><td><code>chat</code></td><td>全双工：并发的发送/接收 goroutine 共用一个 <code>Conn</code></td></tr>
+          <tr><td><code>connection-styles</code></td><td>一个 <code>-mode</code> 开关切换 rc-cm / rc-handshake / ud</td></tr>
+          <tr><td><code>multi-client</code></td><td>RC 服务端 <code>Accept</code> 循环服务多个客户端</td></tr>
+          <tr><td><code>ud-broadcast</code></td><td>一个 UD 发送方 → 多个注册表发现的对端（AH 缓存）</td></tr>
+          <tr><td><code>bench-throughput</code></td><td><code>SendMsg</code> vs <code>SendBatch</code> 的 Gb/s 自测</td></tr>
+          <tr><td><code>tuning</code></td><td>把每个 <code>Option</code> 都做成一个 flag，附调优指引</td></tr>
+        </tbody>
+      </table>
+
+      <h2>逐个说明</h2>
+
+      <h3>file-transfer —— 当成 io.ReadWriteCloser 用</h3>
+      <p>客户端 <code>io.Copy</code> 把文件灌进连接，服务端 <code>io.Copy</code> 把连接写进文件。
+        关闭客户端连接会发 FIN，服务端的拷贝在 <code>io.EOF</code> 处自然终止。这是字节流适配器最实用的体现。</p>
+      <pre><code>go run ./examples/file-transfer -l 0.0.0.0:18515 -out received.bin  <span class="c"># 服务端</span>
+go run ./examples/file-transfer 33.0.226.25:18515 -in payload.bin  <span class="c"># 客户端</span></code></pre>
+
+      <h3>large-message —— 大消息分片/重组</h3>
+      <p>发一条几 MiB 的消息：一次 <code>SendMsg</code> 在信用流控下被透明拆成许多帧，一次 <code>RecvMsg</code> 重组回完整消息、
+        边界保留。两端都打印 SHA-256 验证完整性。</p>
+      <pre><code>go run ./examples/large-message -l 0.0.0.0:18515
+go run ./examples/large-message 33.0.226.25:18515 -size 16   <span class="c"># 发 16 MiB</span></code></pre>
+
+      <h3>rpc —— 请求/响应</h3>
+      <p>客户端发请求并阻塞等回复；服务端循环 <code>RecvMsg → 处理 → SendMsg</code>（示例里把请求转大写）。
+        客户端关闭后，服务端的 <code>RecvMsg</code> 返回 <code>io.EOF</code> 退出。典型的同步 RPC 骨架。</p>
+
+      <h3>chat —— 全双工并发</h3>
+      <p>每一端同时跑一个<strong>发送 goroutine</strong>（stdin→对端）和一个<strong>接收循环</strong>（对端→stdout），
+        共用一个 <code>Conn</code>。演示了「一个并发读 + 一个并发写安全」的契约，以及关闭连接唤醒阻塞的 <code>RecvMsg</code>。</p>
+
+      <h3>connection-styles —— 三种建连一键切换</h3>
+      <p>一个程序用 <code>-mode</code> 涵盖 <code>rdmanet</code> 的全部建连方式：</p>
+      <table>
+        <thead><tr><th><code>-mode</code></th><th>传输</th><th>建连</th></tr></thead>
+        <tbody>
+          <tr><td><code>rc-cm</code>（默认）</td><td>RC 可靠</td><td>rdma_cm</td></tr>
+          <tr><td><code>rc-handshake</code></td><td>RC 可靠</td><td>TCP 握手（<code>WithHandshake</code>）</td></tr>
+          <tr><td><code>ud</code></td><td>UD 数据报</td><td>无连接，用 <code>Addr</code> 字符串寻址</td></tr>
+        </tbody>
+      </table>
+
+      <h3>multi-client —— 服务多个客户端</h3>
+      <p>RC 服务端在 <code>Accept</code> 循环里逐个处理客户端（每个连接回显一条消息后关闭）。
+        服务端长驻，客户端可反复连。是写「一对多服务」的模板。</p>
+
+      <h3>ud-broadcast —— UD 一对多</h3>
+      <p>一个 UD 发送方通过注册表发现多个接收方，逐一 <code>WriteTo</code>。<code>PacketConn</code> 会为每个目的地
+        缓存一个 <code>AddressHandle</code>，重复发往同一对端时复用，省去重建 AH 的开销。</p>
+
+      <h3>bench-throughput —— 批量增益自测</h3>
+      <p>客户端把 N 条消息发两遍——先逐条 <code>SendMsg</code>，再批量 <code>SendBatch</code>——分别报告 Gb/s 和 Mmsg/s，
+        直观看出批量摊薄开销的收益。服务端用 <code>RecvBatch</code> 收两遍。</p>
+      <pre><code>go run ./examples/bench-throughput -l 0.0.0.0:18515            <span class="c"># 服务端</span>
+go run ./examples/bench-throughput 33.0.226.25:18515 -n 100000 -s 1024 -b 32</code></pre>
+
+      <h3>tuning —— 所有 Option 一处试</h3>
+      <p>把每个 <code>rdmanet</code> 选项都暴露成一个 flag，并打印解析后的配置，外加一个小回显，方便逐项实验调优。
+        想系统理解各 Option 的影响，配合<a href="p2-perf.html">性能选项</a>一节读它。</p>
+
+      <h2>建议的学习路径</h2>
+      <div class="callout tip">
+        <span class="tag">推荐顺序</span>
+        先跑 <code>echo-msg</code>（最小可用）→ 看 <code>rpc</code> / <code>chat</code>（真实交互模式）→
+        想压测就上 <code>cmd/go_rdmanet_bw</code> 或 <code>bench-throughput</code> →
+        需要精细控制再回到底层 <code>perftest</code> 包看 setup 全过程。
+      </div>
+
+      <div id="page-nav" class="page-nav"></div>
+      <div class="foot">gordma 教程 · 全文完</div>
+    </div>
+  </main>
+</div>
+<script src="nav.js"></script>
+</body>
+</html>

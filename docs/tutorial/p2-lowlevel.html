@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>gordma · 底层 verbs 封装</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-page="p2-lowlevel">
+<div class="layout">
+  <aside class="sidebar">
+    <a class="brand" href="index.html" style="text-decoration:none">
+      <div class="logo">G</div>
+      <div class="name">gordma</div>
+    </a>
+    <div class="brand-sub">Go 语言 RDMA 网络库 · 教程</div>
+    <nav id="sidebar-nav" class="nav"></nav>
+  </aside>
+  <main class="content">
+    <div class="content-inner">
+      <span class="kicker">第二部分 · 3 / 7</span>
+      <h1>底层 verbs 封装</h1>
+      <p class="lede">第一部分那张对象表，在代码里就是这些 Go 类型和方法。引用包注释 <code>doc.go</code>：
+        <em>「The library mirrors the object model of rdma-core: Device, Context, PD, MR, CQ, QP, AH and CompChannel.」</em></p>
+
+      <h2>典型的资源创建链</h2>
+      <pre><code><span class="c">// 1. 枚举并打开设备</span>
+devs, free, _ := gordma.<span class="f">GetDeviceList</span>()
+<span class="k">defer</span> <span class="f">free</span>()
+ctx, _ := devs[<span class="s">0</span>].<span class="f">Open</span>()          <span class="c">// → *Context</span>
+<span class="k">defer</span> ctx.<span class="f">Close</span>()
+
+<span class="c">// 2. 保护域 + 注册内存（返回带 lkey/rkey 的 MR）</span>
+pd, _ := ctx.<span class="f">AllocPD</span>()
+mr, _ := pd.<span class="f">RegMRBuffer</span>(<span class="s">65536</span>, gordma.AccessLocalWrite|gordma.AccessRemoteWrite)
+buf   := mr.<span class="f">Bytes</span>()              <span class="c">// GC 安全的可读写切片</span>
+
+<span class="c">// 3. 完成队列 + 队列对</span>
+cq, _ := ctx.<span class="f">CreateCQ</span>(<span class="s">256</span>, <span class="k">nil</span>)  <span class="c">// 第二个参数是可选的完成通道</span>
+qp, _ := pd.<span class="f">CreateQP</span>(gordma.QPInitAttr{
+    Type:   gordma.QPTypeRC,
+    SendCQ: cq, RecvCQ: cq,
+    Cap:    gordma.<span class="f">DefaultQPCapacity</span>(),
+})</code></pre>
+
+      <h2>MR：内存注册与那两把钥匙</h2>
+      <p><code>RegMRBuffer(size, flags)</code> 分配并注册一块缓冲区，<code>flags</code> 是 <code>AccessFlag</code> 位掩码，控制网卡能对它做什么：</p>
+      <table>
+        <thead><tr><th>AccessFlag</th><th>含义</th></tr></thead>
+        <tbody>
+          <tr><td><code>AccessLocalWrite</code></td><td>允许本地写（接收缓冲区必需）</td></tr>
+          <tr><td><code>AccessRemoteWrite</code></td><td>允许远端 RDMA Write 进来</td></tr>
+          <tr><td><code>AccessRemoteRead</code></td><td>允许远端 RDMA Read</td></tr>
+          <tr><td><code>AccessRemoteAtomic</code></td><td>允许远端原子操作</td></tr>
+        </tbody>
+      </table>
+      <p>注册后这些方法取出关键信息：</p>
+      <pre><code>mr.<span class="f">Bytes</span>()   <span class="c">// []byte，GC 安全</span>
+mr.<span class="f">LKey</span>()    <span class="c">// 本地 key</span>
+mr.<span class="f">RKey</span>()    <span class="c">// 远端 key（发给对方授权 RDMA 访问）</span>
+mr.<span class="f">Addr</span>()    <span class="c">// 虚拟地址（远端 Write/Read 的落点）</span>
+mr.<span class="f">Len</span>()     <span class="c">// 长度</span></code></pre>
+
+      <h2>QP 状态机就是三个方法</h2>
+      <p>第一部分讲的 INIT → RTR → RTS，在 gordma 里就是 <code>QP</code> 上的三个方法，对端参数用
+        <code>RCConnParams</code> 携带（详见 <a href="p1-qp.html">第一部分 · QP 与状态机</a>）：</p>
+      <pre><code>qp.<span class="f">ModifyToInit</span>(portNum, access)
+qp.<span class="f">ModifyToRTR</span>(params)   <span class="c">// params 含对端 QPN/PSN/GID/MTU…</span>
+qp.<span class="f">ModifyToRTS</span>(params)</code></pre>
+
+      <h2>投递工作请求</h2>
+      <p>发送/接收都用结构体描述（<code>postwr.go</code>），再 post 到 QP。<code>SGE</code> 是 scatter/gather 元素，
+        指向已注册 MR 的一段：</p>
+      <pre><code><span class="c">// 构造一个覆盖 MR [off, off+length) 的 SGE</span>
+sge := gordma.<span class="f">SGEFromMR</span>(mr, <span class="s">0</span>, <span class="s">1024</span>)
+
+wr := gordma.SendWR{
+    WRID:     <span class="s">1</span>,
+    Opcode:   gordma.OpSend,    <span class="c">// 或 OpWrite / OpRead</span>
+    SGList:   []gordma.SGE{sge},
+    Signaled: <span class="k">true</span>,           <span class="c">// 要求产生完成项</span>
+}</code></pre>
+      <p>对单边操作，<code>SendWR</code> 里还要填 <code>RemoteAddr</code> + <code>RKey</code>；对 UD，则填 <code>AH</code> + <code>RemoteQPN</code> + <code>RemoteQKey</code>。
+        小消息可设 <code>Inline: true</code> 走内联优化。</p>
+
+      <h2>轮询完成</h2>
+      <p>完成项是扁平值类型 <code>WorkCompletion</code>（<code>cq.go</code>），可复用切片避免每次分配。先查状态：</p>
+      <pre><code><span class="k">if</span> !wc.Status.<span class="f">OK</span>() {           <span class="c">// Status != WCSuccess</span>
+    <span class="c">// 失败：RNR 重试耗尽 / 长度错误 / 保护错误…</span>
+}
+<span class="c">// wc.WRID 对回 post 的 id；wc.ByteLen 收到字节数；wc.Opcode 操作类型</span></code></pre>
+
+      <h2>查询能力 / 端口</h2>
+      <p>需要时可以查设备和端口属性来决定参数（MTU、GID 表长度、是否 RoCE 等）：</p>
+      <table>
+        <thead><tr><th>类型</th><th>用途</th></tr></thead>
+        <tbody>
+          <tr><td><code>DeviceAttr</code></td><td>设备能力：MaxQP / MaxCQE / MaxMR / 固件版本…（<code>QueryDevice</code>）</td></tr>
+          <tr><td><code>PortAttr</code></td><td>端口属性：State / ActiveMTU / LID / LinkLayer…（<code>QueryPort</code>）</td></tr>
+        </tbody>
+      </table>
+
+      <div class="callout tip">
+        <span class="tag">下一步</span>
+        以上每一步在高层 <code>rdmanet</code> 里都被隐藏了。下一节看
+        <a href="p2-rdmanet.html">高层 rdmanet</a> 是怎么把它们收成 <code>SendMsg</code>/<code>RecvMsg</code> 的。
+      </div>
+
+      <div id="page-nav" class="page-nav"></div>
+      <div class="foot">gordma 教程</div>
+    </div>
+  </main>
+</div>
+<script src="nav.js"></script>
+</body>
+</html>

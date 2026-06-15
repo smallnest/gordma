@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>gordma · 传输类型 RC / UD</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-page="p1-transport">
+<div class="layout">
+  <aside class="sidebar">
+    <a class="brand" href="index.html" style="text-decoration:none">
+      <div class="logo">G</div>
+      <div class="name">gordma</div>
+    </a>
+    <div class="brand-sub">Go 语言 RDMA 网络库 · 教程</div>
+    <nav id="sidebar-nav" class="nav"></nav>
+  </aside>
+  <main class="content">
+    <div class="content-inner">
+      <span class="kicker">第一部分 · 4 / 6</span>
+      <h1>传输类型 RC / UD</h1>
+      <p class="lede">QP 有不同的传输类型，决定了它的可靠性、连接性和能用哪些操作。
+        gordma 主要关注两种：<strong>RC（可靠连接）</strong>和 <strong>UD（不可靠数据报）</strong>，
+        分别类比 TCP 和 UDP。此外还要区分双边与单边两类操作语义。</p>
+
+      <h2>RC vs UD</h2>
+      <table>
+        <thead><tr><th>维度</th><th>RC（可靠连接）<span class="pill green">类比 TCP</span></th><th>UD（不可靠数据报）<span class="pill gold">类比 UDP</span></th></tr></thead>
+        <tbody>
+          <tr><td>连接性</td><td>面向连接，一个 QP 对一个对端</td><td>无连接，一个 QP 可发往多个对端</td></tr>
+          <tr><td>可靠性</td><td>保证有序、可靠送达（硬件重传）</td><td>不保证，可能丢失/乱序</td></tr>
+          <tr><td>消息大小</td><td>可超大（大消息硬件分片）</td><td>单条不能超过路径 MTU</td></tr>
+          <tr><td>支持操作</td><td>Send/Recv + RDMA Write/Read</td><td>仅 Send/Recv</td></tr>
+          <tr><td>寻址</td><td>建连时确定对端</td><td>每次发送指定对端（AH + QPN + QKey）</td></tr>
+          <tr><td>适用</td><td>大多数点对点通信</td><td>一对多、广播、服务发现</td></tr>
+        </tbody>
+      </table>
+      <p>gordma 的类型常量（<code>types.go</code>）：</p>
+      <pre><code><span class="k">const</span> (
+    QPTypeRC QPType = <span class="s">2</span>  <span class="c">// 可靠连接</span>
+    QPTypeUC QPType = <span class="s">3</span>  <span class="c">// 不可靠连接（非主要目标）</span>
+    QPTypeUD QPType = <span class="s">4</span>  <span class="c">// 不可靠数据报</span>
+)</code></pre>
+
+      <h2>双边操作 vs 单边操作</h2>
+      <p>这是 RDMA 区别于普通网络的另一个核心概念，按「对端 CPU 是否参与」分两类：</p>
+      <div class="grid">
+        <div class="tile">
+          <div class="t-icon"><i data-lucide="handshake"></i></div>
+          <div class="t-title">双边 (Two-sided)：Send / Recv</div>
+          <div class="t-desc">接收方必须<strong>预先投递接收 WR</strong>，发送方的 Send 才有落点。双方 CPU 都参与，语义最像 socket。RC 和 UD 都支持。</div>
+        </div>
+        <div class="tile">
+          <div class="t-icon"><i data-lucide="target"></i></div>
+          <div class="t-title">单边 (One-sided)：RDMA Write / Read</div>
+          <div class="t-desc">发起方凭 <code>rkey</code> + 远端地址，直接读写对端已注册内存，<strong>对端 CPU 完全不感知</strong>，时延最低。仅 RC 支持。</div>
+        </div>
+      </div>
+      <p>gordma 的操作码（<code>postwr.go</code>）正好对应这几类：</p>
+      <pre><code><span class="k">const</span> (
+    OpSend     SendOpcode = <span class="s">0</span>  <span class="c">// 双边 SEND（消耗对端一个 recv WR）</span>
+    OpWrite    SendOpcode = <span class="s">1</span>  <span class="c">// 单边 RDMA WRITE</span>
+    OpWriteImm SendOpcode = <span class="s">2</span>  <span class="c">// RDMA WRITE 带立即数</span>
+    OpRead     SendOpcode = <span class="s">3</span>  <span class="c">// 单边 RDMA READ</span>
+)</code></pre>
+      <p>这也解释了第三部分的工具命名：<code>go_send_*</code> 测双边 Send，<code>go_write_*</code> / <code>go_read_*</code>
+        测单边 Write/Read。</p>
+
+      <h2>UD 的两个特别之处</h2>
+      <p>UD 因为无连接，在 gordma 里有两个要注意的细节：</p>
+      <ul>
+        <li><strong>每条收到的数据报前面有 40 字节的 GRH</strong>（Global Routing Header）。接收缓冲区要多留
+          <code>GRHLength = 40</code> 字节，跳过它才是真正的负载。</li>
+        <li><strong>用 AH（Address Handle）寻址</strong>：发送前要根据对端 GID/QPN 构造地址句柄。
+          gordma 的 <code>AHAttr</code> 描述这些信息，<code>UDConnParams</code> 携带 QKey（两端必须一致才能收）。</li>
+      </ul>
+      <pre><code><span class="c">// UD 接收：前 40 字节是 GRH，需跳过</span>
+<span class="k">const</span> GRHLength = <span class="s">40</span>
+
+<span class="k">type</span> <span class="f">UDConnParams</span> <span class="k">struct</span> {
+    QKey    <span class="k">uint32</span>  <span class="c">// 两端必须匹配，数据报才被接受</span>
+    PortNum <span class="k">int</span>
+}</code></pre>
+
+      <div class="callout tip">
+        <span class="tag">下一步</span>
+        上面多次提到 GID。它到底是什么、为什么有「GID 索引」？下一节讲
+        <a href="p1-roce.html">RoCE 与 GID</a>——这是 RoCE 组网里最常踩坑的地方。
+      </div>
+
+      <div id="page-nav" class="page-nav"></div>
+      <div class="foot">gordma 教程</div>
+    </div>
+  </main>
+</div>
+<script src="nav.js"></script>
+</body>
+</html>

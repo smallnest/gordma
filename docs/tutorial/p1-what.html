@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>gordma · 什么是 RDMA</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-page="p1-what">
+<div class="layout">
+  <aside class="sidebar">
+    <a class="brand" href="index.html" style="text-decoration:none">
+      <div class="logo">G</div>
+      <div class="name">gordma</div>
+    </a>
+    <div class="brand-sub">Go 语言 RDMA 网络库 · 教程</div>
+    <nav id="sidebar-nav" class="nav"></nav>
+  </aside>
+  <main class="content">
+    <div class="content-inner">
+      <span class="kicker">第一部分 · 1 / 6</span>
+      <h1>什么是 RDMA</h1>
+      <p class="lede">RDMA（Remote Direct Memory Access，远程直接内存访问）让一台机器的网卡直接读写
+        另一台机器的内存，<strong>绕过对端的 CPU 与操作系统内核</strong>。这是它与传统 TCP/IP 套接字最根本的区别，
+        也是它能做到微秒级时延、百 Gb/s 级吞吐的根源。</p>
+
+      <h2>一句话定义</h2>
+      <p>普通网络通信里，数据要在「用户态缓冲区 ↔ 内核缓冲区 ↔ 网卡」之间反复拷贝，每一跳都需要 CPU 介入、
+        系统调用和上下文切换。RDMA 把这条路径压扁成「应用缓冲区 → 网卡 → 网卡 → 对端应用缓冲区」，
+        由网卡硬件用 DMA 直接搬运。</p>
+
+      <div class="callout note">
+        <span class="tag">对比</span>
+        <strong>传统 socket：</strong><code>应用 → 内核协议栈 → 网卡 …… 网卡 → 内核协议栈 → 应用</code><br>
+        <strong>RDMA：</strong><code>应用缓冲区 → 网卡 → 网卡 → 对端应用缓冲区</code>（硬件直达，对端 CPU 可不参与）
+      </div>
+
+      <h2>三大支柱</h2>
+      <div class="grid">
+        <div class="tile">
+          <div class="t-icon"><i data-lucide="rocket"></i></div>
+          <div class="t-title">内核旁路 (Kernel Bypass)</div>
+          <div class="t-desc">应用在用户态直接和网卡的队列交互，数据路径不经过内核协议栈，省去系统调用与上下文切换。</div>
+        </div>
+        <div class="tile">
+          <div class="t-icon"><i data-lucide="clipboard-list"></i></div>
+          <div class="t-title">零拷贝 (Zero-copy)</div>
+          <div class="t-desc">网卡通过 DMA 直接读写已注册的用户态缓冲区，不再有内核缓冲区到用户缓冲区的多次复制。</div>
+        </div>
+        <div class="tile">
+          <div class="t-icon"><i data-lucide="timer"></i></div>
+          <div class="t-title">CPU 卸载 (CPU Offload)</div>
+          <div class="t-desc">传输、重传、校验由网卡硬件完成；做 RDMA Read/Write 时，对端 CPU 甚至完全不感知。</div>
+        </div>
+      </div>
+
+      <h2>为什么这么快</h2>
+      <p>把时延拆开看，传统 socket 的开销主要来自这几处，而 RDMA 几乎逐项消除：</p>
+      <table>
+        <thead><tr><th>开销来源</th><th>传统 socket</th><th>RDMA</th></tr></thead>
+        <tbody>
+          <tr><td>系统调用 / 上下文切换</td><td>每次收发都有</td><td>数据路径无（投递到用户态队列）</td></tr>
+          <tr><td>内存拷贝次数</td><td>多次（用户↔内核↔网卡）</td><td>零拷贝（DMA 直达）</td></tr>
+          <tr><td>协议栈处理</td><td>内核 TCP/IP 栈逐层处理</td><td>网卡硬件卸载</td></tr>
+          <tr><td>对端 CPU 参与</td><td>必须</td><td>单边操作时不需要</td></tr>
+        </tbody>
+      </table>
+
+      <h2>典型应用场景</h2>
+      <ul>
+        <li><strong>HPC / 超算</strong>：MPI 通信库底层大量使用 RDMA。</li>
+        <li><strong>分布式存储</strong>：NVMe-oF、Ceph、分布式文件系统用它做低延迟数据面。</li>
+        <li><strong>AI 训练</strong>：GPU 之间的梯度同步（如 NCCL over RoCE）依赖 RDMA 打满带宽。</li>
+        <li><strong>数据库 / KV</strong>：远程内存访问、分布式事务的低延迟通信。</li>
+      </ul>
+
+      <div class="callout tip">
+        <span class="tag">承上启下</span>
+        RDMA 的强大来自它独特的编程模型——不是「读写一个 socket fd」，而是操作一组协作的硬件对象。
+        下一节就来认识这套 <a href="p1-verbs.html">Verbs 对象模型</a>。
+      </div>
+
+      <div id="page-nav" class="page-nav"></div>
+      <div class="foot">gordma 教程</div>
+    </div>
+  </main>
+</div>
+<script src="nav.js"></script>
+</body>
+</html>

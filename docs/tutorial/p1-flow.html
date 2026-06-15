@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>gordma · 一次传输的全流程</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-page="p1-flow">
+<div class="layout">
+  <aside class="sidebar">
+    <a class="brand" href="index.html" style="text-decoration:none">
+      <div class="logo">G</div>
+      <div class="name">gordma</div>
+    </a>
+    <div class="brand-sub">Go 语言 RDMA 网络库 · 教程</div>
+    <nav id="sidebar-nav" class="nav"></nav>
+  </aside>
+  <main class="content">
+    <div class="content-inner">
+      <span class="kicker">第一部分 · 6 / 6</span>
+      <h1>一次传输的全流程</h1>
+      <p class="lede">把前面所有概念串起来。这一节走一遍一次 RC Send 的完整生命周期——记住这七步，
+        第二部分你会看到 gordma 如何把每一步封装成 Go 方法，第三部分则会看到 perftest 工具是怎么实操的。</p>
+
+      <h2>七步生命周期</h2>
+      <ol class="steps">
+        <li><strong>打开设备</strong>：枚举 <code>Device</code>，<code>Open</code> 得到 <code>Context</code>。</li>
+        <li><strong>建资源</strong>：分配 <code>PD</code>，注册内存得到 <code>MR</code>（拿到 lkey/rkey），创建 <code>CQ</code>，再创建 <code>QP</code>。</li>
+        <li><strong>带外握手</strong>：通过 TCP 或 librdmacm 交换双方 QPN / PSN / GID / rkey / 远端地址。</li>
+        <li><strong>QP 状态迁移</strong>：INIT → RTR → RTS，填入对端参数。</li>
+        <li><strong>投递工作请求</strong>：接收方先 <code>post_recv</code>，发送方 <code>post_send</code>。</li>
+        <li><strong>轮询完成队列</strong>：从 <code>CQ</code> 取出完成项(WC)，确认操作成功。</li>
+        <li><strong>清理</strong>：销毁 QP / CQ / MR / PD，关闭 Context。</li>
+      </ol>
+
+      <h2>时序图</h2>
+      <div class="diagram">
+        <svg viewBox="0 0 660 470" role="img"
+             aria-label="一次 RC Send 的时序图：客户端与服务端各自建资源、带外交换参数、迁移 QP 状态、投递工作请求并轮询完成队列。"
+             xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
+                    markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="#D97757"/>
+            </marker>
+            <marker id="arrow2" viewBox="0 0 10 10" refX="9" refY="5"
+                    markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="#4A6FA5"/>
+            </marker>
+          </defs>
+
+          <!-- actor headers -->
+          <g class="actor">
+            <rect x="80" y="20" width="120" height="38" rx="8"/>
+            <text x="140" y="44">客户端</text>
+          </g>
+          <g class="actor">
+            <rect x="380" y="20" width="120" height="38" rx="8"/>
+            <text x="440" y="44">服务端</text>
+          </g>
+
+          <!-- lifelines -->
+          <line class="lifeline" x1="140" y1="58" x2="140" y2="448"/>
+          <line class="lifeline" x1="440" y1="58" x2="440" y2="448"/>
+
+          <!-- ① build resources (both sides) -->
+          <rect class="selfbox" x="118" y="78" width="44" height="22" rx="4"/>
+          <rect class="selfbox" x="418" y="78" width="44" height="22" rx="4"/>
+          <text class="step" x="290" y="94">① 各自 open 设备 / 建资源</text>
+
+          <!-- ③ out-of-band channel (bidirectional) -->
+          <line class="msg dash" x1="142" y1="138" x2="438" y2="138"
+                marker-end="url(#arrow2)" marker-start="url(#arrow2)"/>
+          <text class="lbl" x="290" y="130">③ 带外通道 (TCP / CM)</text>
+          <text class="note" x="290" y="156">交换 QPN / PSN / GID / rkey</text>
+
+          <!-- ④ state machine -->
+          <rect class="selfbox wide" x="106" y="184" width="68" height="22" rx="4"/>
+          <rect class="selfbox wide" x="406" y="184" width="68" height="22" rx="4"/>
+          <text class="step" x="290" y="200">④ INIT → RTR → RTS（双方）</text>
+
+          <!-- ⑤ post_recv (server hangs recv first) -->
+          <rect class="selfbox r" x="418" y="238" width="74" height="22" rx="4"/>
+          <text class="lbl" x="335" y="253" text-anchor="end">⑤ post_recv</text>
+          <text class="note" x="335" y="273" text-anchor="end">接收方先挂好接收缓冲</text>
+
+          <!-- ⑤ post_send client → server -->
+          <line class="msg" x1="142" y1="312" x2="438" y2="312" marker-end="url(#arrow)"/>
+          <text class="lbl" x="290" y="304">⑤ post_send</text>
+          <text class="note" x="290" y="330">网卡硬件直送对端内存</text>
+
+          <!-- ⑥ poll CQ (both) -->
+          <rect class="selfbox ok" x="112" y="360" width="56" height="22" rx="4"/>
+          <rect class="selfbox ok" x="412" y="360" width="56" height="22" rx="4"/>
+          <text class="step" x="290" y="376">⑥ 轮询 CQ，各自确认完成 ✓</text>
+        </svg>
+      </div>
+      <div class="callout note">
+        <span class="tag">为什么接收方要先 post_recv</span>
+        双边 Send 要求<strong>接收方预先挂好接收 WR</strong>（指向一块注册内存），发送方的数据才有落点。
+        若发来时对端没有可用 recv WR，会触发 RNR（Receiver Not Ready），靠重试机制兜底。
+      </div>
+
+      <h2>对应到 gordma 的方法</h2>
+      <table>
+        <thead><tr><th>步骤</th><th>底层 gordma 调用</th></tr></thead>
+        <tbody>
+          <tr><td>① 打开设备</td><td><code>GetDeviceList()</code> → <code>dev.Open()</code></td></tr>
+          <tr><td>② 建资源</td><td><code>ctx.AllocPD()</code> / <code>pd.RegMRBuffer()</code> / <code>ctx.CreateCQ()</code> / <code>pd.CreateQP()</code></td></tr>
+          <tr><td>③ 握手</td><td><code>handshake</code> 包（TCP）或 <code>gordma.Dial/Listen</code>（rdma_cm）</td></tr>
+          <tr><td>④ 状态迁移</td><td><code>qp.ModifyToInit/RTR/RTS()</code></td></tr>
+          <tr><td>⑤ 投递 WR</td><td><code>SendWR</code> / <code>RecvWR</code> + post（见 <code>postwr.go</code>）</td></tr>
+          <tr><td>⑥ 轮询完成</td><td><code>CQ</code> 轮询 → <code>WorkCompletion</code>（检查 <code>Status.OK()</code>）</td></tr>
+          <tr><td>⑦ 清理</td><td>各对象的 <code>Close()</code></td></tr>
+        </tbody>
+      </table>
+
+      <h2>完成项怎么读</h2>
+      <p>第 ⑥ 步拿到的每个完成项是一个扁平值类型 <code>WorkCompletion</code>（<code>cq.go</code>），
+        关键是先看状态：</p>
+      <pre><code>wc := <span class="c">/* 从 CQ 轮询得到 */</span>
+<span class="k">if</span> !wc.Status.<span class="f">OK</span>() {        <span class="c">// Status != WCSuccess</span>
+    <span class="c">// 失败：可能是 RNR 重试耗尽、长度错误、保护错误…</span>
+}
+<span class="c">// wc.WRID 对回 post 时填的 id；wc.ByteLen 是收到的字节数</span></code></pre>
+
+      <div class="callout tip">
+        <span class="tag">承上启下</span>
+        第 2~6 步几乎全是样板代码，繁琐又容易出错。这正是 gordma 高层 <code>rdmanet</code> 包要替你做掉的事——
+        你只需要 <code>Dial</code> / <code>SendMsg</code> / <code>RecvMsg</code>。
+        进入 <a href="p2-overview.html">第二部分</a>，看 gordma 库是怎么设计的。
+      </div>
+
+      <div id="page-nav" class="page-nav"></div>
+      <div class="foot">gordma 教程</div>
+    </div>
+  </main>
+</div>
+<script src="nav.js"></script>
+</body>
+</html>

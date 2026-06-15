@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>gordma · 高层 rdmanet</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-page="p2-rdmanet">
+<div class="layout">
+  <aside class="sidebar">
+    <a class="brand" href="index.html" style="text-decoration:none">
+      <div class="logo">G</div>
+      <div class="name">gordma</div>
+    </a>
+    <div class="brand-sub">Go 语言 RDMA 网络库 · 教程</div>
+    <nav id="sidebar-nav" class="nav"></nav>
+  </aside>
+  <main class="content">
+    <div class="content-inner">
+      <span class="kicker">第二部分 · 4 / 7</span>
+      <h1>高层 rdmanet</h1>
+      <p class="lede">底层那一长串样板，<code>rdmanet</code> 全替你做了：内存注册、工作请求投递、完成队列轮询、流控。
+        它提供三个 <code>net</code> 风格的核心类型，让你像写 TCP/UDP 一样写 RDMA。</p>
+
+      <h2>三个核心类型</h2>
+      <table>
+        <thead><tr><th>类型</th><th>语义</th><th>主要方法</th></tr></thead>
+        <tbody>
+          <tr><td><code>Conn</code></td><td>RC 可靠连接端点</td><td><code>SendMsg</code> / <code>RecvMsg</code> / <code>Read</code> / <code>Write</code> / <code>Close</code></td></tr>
+          <tr><td><code>Listener</code></td><td>接受 RC 连接</td><td><code>Accept</code> / <code>Close</code> / <code>Addr</code></td></tr>
+          <tr><td><code>PacketConn</code></td><td>UD 数据报端点</td><td><code>ReadFrom</code> / <code>WriteTo</code></td></tr>
+        </tbody>
+      </table>
+
+      <h2>消息语义 vs 字节流</h2>
+      <p>RC 本质是面向消息的，所以 <code>Conn</code> 的主 API 是<strong>保留消息边界</strong>的：
+        一次 <code>SendMsg</code> 对应一次 <code>RecvMsg</code>，无论多大——大消息会被透明地<strong>分片/重组</strong>。</p>
+      <pre><code><span class="c">// 消息语义：边界保留</span>
+conn.<span class="f">SendMsg</span>([]<span class="k">byte</span>(<span class="s">"hello"</span>))
+msg, _ := conn.<span class="f">RecvMsg</span>()        <span class="c">// 恰好收到 "hello"</span>
+
+<span class="c">// 也可以收进调用方缓冲区，拿到写入长度</span>
+n, _ := conn.<span class="f">RecvMsgBuf</span>(buf)</code></pre>
+      <p>在此之上还叠了一层<strong>字节流适配器</strong> <code>Read</code>/<code>Write</code>，让 <code>Conn</code> 满足
+        <code>io.ReadWriteCloser</code>，于是已有的 <code>io.Reader</code>/<code>io.Writer</code> 代码（比如 <code>io.Copy</code>）能直接用：</p>
+      <pre><code><span class="c">// 字节流：Conn 即 io.ReadWriteCloser，可被 io.Copy 消费</span>
+io.<span class="f">Copy</span>(conn, file)            <span class="c">// 发文件</span>
+io.<span class="f">Copy</span>(os.Stdout, conn)      <span class="c">// 收并打印</span></code></pre>
+      <div class="callout note">
+        <span class="tag">重要约束</span>
+        <strong>同一个 Conn 上不要混用 <code>Read</code> 和 <code>RecvMsg</code></strong>——字节流适配器内部可能缓存了半条消息，
+        后续 <code>RecvMsg</code> 看不到那部分。一个 Conn 只选一种接收风格。
+      </div>
+
+      <h2>服务端 / 客户端骨架</h2>
+      <pre><code><span class="c">// 服务端</span>
+ln, _ := rdmanet.<span class="f">Listen</span>(<span class="s">"0.0.0.0:18515"</span>)
+<span class="k">defer</span> ln.<span class="f">Close</span>()
+<span class="k">for</span> {
+    conn, err := ln.<span class="f">Accept</span>()       <span class="c">// 可循环服务多个客户端</span>
+    <span class="k">if</span> err != <span class="k">nil</span> { <span class="k">break</span> }
+    <span class="k">go</span> <span class="f">serve</span>(conn)
+}
+
+<span class="c">// 客户端</span>
+conn, _ := rdmanet.<span class="f">Dial</span>(<span class="s">"10.0.0.1:18515"</span>)
+<span class="k">defer</span> conn.<span class="f">Close</span>()
+conn.<span class="f">SendMsg</span>([]<span class="k">byte</span>(<span class="s">"ping"</span>))</code></pre>
+
+      <h2>UD 数据报：PacketConn</h2>
+      <p>UD 是无连接的，所以用 <code>PacketConn</code> 的 <code>WriteTo</code>/<code>ReadFrom</code>，对端用结构化的 <code>Addr</code> 命名
+        （格式 <code>gid%qpn[#qkey]</code>，<code>String()</code>/<code>ResolveAddr</code> 互转）。一条数据报超过路径 MTU 会被
+        <strong>拒绝而非截断</strong>。配套的可选 <code>Registry</code> 是个轻量的「名字→Addr」目录，用来带外发现对端。</p>
+
+      <h2>并发约定</h2>
+      <div class="callout tip">
+        <span class="tag">线程安全</span>
+        一个 <code>Conn</code> 上<strong>同时一个并发读 + 一个并发写是安全的</strong>（典型的收发分离，见 <code>chat</code> 示例）。
+        关闭连接会让阻塞中的 <code>RecvMsg</code> 以 <code>io.EOF</code> 唤醒返回——便于优雅退出。
+      </div>
+
+      <div class="callout tip">
+        <span class="tag">下一步</span>
+        <code>Dial</code>/<code>Listen</code> 背后其实有两种建连方式。下一节讲 <a href="p2-connect.html">rdma_cm 与 TCP 握手</a>。
+      </div>
+
+      <div id="page-nav" class="page-nav"></div>
+      <div class="foot">gordma 教程</div>
+    </div>
+  </main>
+</div>
+<script src="nav.js"></script>
+</body>
+</html>

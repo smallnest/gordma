@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>gordma · 运行 examples</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-page="p3-examples-run">
+<div class="layout">
+  <aside class="sidebar">
+    <a class="brand" href="index.html" style="text-decoration:none">
+      <div class="logo">G</div>
+      <div class="name">gordma</div>
+    </a>
+    <div class="brand-sub">Go 语言 RDMA 网络库 · 教程</div>
+    <nav id="sidebar-nav" class="nav"></nav>
+  </aside>
+  <main class="content">
+    <div class="content-inner">
+      <span class="kicker">第三部分 · 4 / 6</span>
+      <h1>运行 examples</h1>
+      <p class="lede"><code>examples/</code> 下每个目录是一个独立的 <code>main</code> 包，<strong>一个功能一个目录</strong>，各自带 README。
+        它们用的是高层 <code>rdmanet</code> API，是最适合「照着抄」的起点。</p>
+
+      <h2>全部能编译，跑需硬件</h2>
+      <pre><code>go build ./examples/...      <span class="c"># 全部编译（任何平台）</span></code></pre>
+      <p>没有 RDMA 硬件时，示例会打印 <code>RDMA not supported on this platform</code> 并干净退出（不 panic），
+        这正是 <a href="p2-stub.html">跨平台 stub</a> 机制的效果。</p>
+
+      <h2>默认设备 / GID</h2>
+      <p>示例默认目标是<strong>第一块 GPU 网卡</strong>：<strong><code>-d mlx5_1 -x 3</code></strong>（RoCE v2）。
+        用 <code>-d mlx5_0</code> 切到 CPU 网络。命令约定：服务端用 <code>-l ADDR</code>，客户端用位置参数 <code>HOST:PORT</code>。</p>
+
+      <h2>示例环境的两节点 IP</h2>
+      <p>各 README 里用的两节点样例 IP（典型多网卡 RoCE 主机）：</p>
+      <table>
+        <thead><tr><th>节点</th><th>CPU 网（<code>mlx5_0</code> / xgbe0）</th><th>GPU 网（<code>mlx5_1</code> / xgbe1）</th></tr></thead>
+        <tbody>
+          <tr><td>node1（服务端）</td><td><code>10.214.180.34</code></td><td><code>33.0.226.25</code></td></tr>
+          <tr><td>node2（客户端）</td><td><code>10.214.180.35</code></td><td><code>33.0.226.27</code></td></tr>
+        </tbody>
+      </table>
+      <div class="callout note">
+        <span class="tag">同一个道理</span>
+        默认 <code>-d mlx5_1</code>（GPU 网），所以客户端拨号填的是 node1 的 <strong>GPU 网卡 IP</strong> <code>33.0.226.25</code>，
+        而不是它的管理口或 CPU 网 IP。换设备就要换成对应接口的 IP。
+      </div>
+
+      <h2>跑一个 echo-msg</h2>
+      <pre><code><span class="c"># node1 服务端</span>
+go run ./examples/echo-msg -l 0.0.0.0:18515
+
+<span class="c"># node2 客户端 —— 拨号 node1 的 GPU 网 IP（xgbe1）</span>
+go run ./examples/echo-msg 33.0.226.25:18515</code></pre>
+      <p>改用 CPU 网卡（<code>-d mlx5_0</code>，拨 node1 的 xgbe0 IP）：</p>
+      <pre><code>go run ./examples/echo-msg -l 0.0.0.0:18515 -d mlx5_0
+go run ./examples/echo-msg 10.214.180.34:18515 -d mlx5_0</code></pre>
+
+      <h2>纯 Go 的 registry，无需硬件</h2>
+      <p>注意 <code>registry</code> / <code>ud-broadcast</code> 里的<strong>注册表服务</strong>是纯 Go（不碰 RDMA），
+        可以在任意机器上单独起，用来做 UD 地址发现：</p>
+      <pre><code><span class="c"># 注册表（纯 Go，无需 RDMA）</span>
+go run ./examples/registry -registry 0.0.0.0:9100</code></pre>
+
+      <div class="callout tip">
+        <span class="tag">下一步</span>
+        17 个示例分两组。下一节是 <a href="p3-core.html">核心功能示例</a>（一个 API 一个示例），
+        再下一节是<a href="p3-scenario.html">场景示例</a>（组合成真实用法）。
+      </div>
+
+      <div id="page-nav" class="page-nav"></div>
+      <div class="foot">gordma 教程</div>
+    </div>
+  </main>
+</div>
+<script src="nav.js"></script>
+</body>
+</html>

@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>gordma · 两种连接方式</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-page="p2-connect">
+<div class="layout">
+  <aside class="sidebar">
+    <a class="brand" href="index.html" style="text-decoration:none">
+      <div class="logo">G</div>
+      <div class="name">gordma</div>
+    </a>
+    <div class="brand-sub">Go 语言 RDMA 网络库 · 教程</div>
+    <nav id="sidebar-nav" class="nav"></nav>
+  </aside>
+  <main class="content">
+    <div class="content-inner">
+      <span class="kicker">第二部分 · 5 / 7</span>
+      <h1>两种连接方式</h1>
+      <p class="lede">第一部分提过：QP 迁移到 RTR 前，必须用带外通道交换对端的 QPN / PSN / GID 等参数。
+        gordma 给了两条路径——<strong>rdma_cm</strong>（默认）和 <strong>TCP 带外握手</strong>，
+        但<strong>产出同样的 <code>Conn</code></strong>。</p>
+
+      <h2>两条路径对比</h2>
+      <div class="grid">
+        <div class="tile">
+          <div class="t-icon"><i data-lucide="handshake"></i></div>
+          <div class="t-title">rdma_cm（默认）<span class="pill blue">推荐</span></div>
+          <div class="t-desc">用 librdmacm 的连接管理器。<code>rdmanet.Dial</code>/<code>Listen</code> 接收 "host:port" 地址，协商完成后返回的 QP <strong>已经在 RTS 状态</strong>。底层对应 <code>gordma.Dial</code>/<code>Listen</code> 与 <code>CMConn</code>。</div>
+        </div>
+        <div class="tile">
+          <div class="t-icon"><i data-lucide="satellite-dish"></i></div>
+          <div class="t-title">TCP 带外握手</div>
+          <div class="t-desc">perftest 的传统做法：自己开个普通 TCP 连接，把 QPN/PSN/GID/LID/RKey/addr 互发，再<strong>自己驱动状态机</strong>。高层用 <code>WithHandshake()</code> 开启，底层是 <code>handshake</code> 包。</div>
+        </div>
+      </div>
+
+      <h2>代码上怎么切换</h2>
+      <pre><code><span class="c">// 默认走 rdma_cm</span>
+conn, _ := rdmanet.<span class="f">Dial</span>(<span class="s">"10.0.0.1:18515"</span>)
+
+<span class="c">// 切换成 TCP 带外握手</span>
+conn, _ := rdmanet.<span class="f">Dial</span>(<span class="s">"10.0.0.1:18515"</span>, rdmanet.<span class="f">WithHandshake</span>())</code></pre>
+      <p>只差一个 Option，上层 <code>SendMsg</code>/<code>RecvMsg</code> 用法完全一致。</p>
+
+      <h2>详解：rdma_cm</h2>
+      <p>librdmacm 把 RDMA 的连接建立包装成类似 socket 的流程（<code>rdma_resolve_addr</code> →
+        <code>rdma_connect</code> / <code>rdma_accept</code> 等），帮你处理地址解析、路由、参数交换和状态迁移。
+        底层返回的是 <code>CMConn</code>，可取出已就绪的 QP/CQ/PD：</p>
+      <pre><code>cmConn.<span class="f">QP</span>()   <span class="c">// *QP，已在 RTS</span>
+cmConn.<span class="f">CQ</span>()   <span class="c">// *CQ</span>
+cmConn.<span class="f">PD</span>()   <span class="c">// *PD</span></code></pre>
+      <p>优点：地址用熟悉的 IP:port，路由、RNR 重试等由 CM 处理；这是大多数场景的首选。</p>
+
+      <h2>详解：TCP 握手</h2>
+      <p><code>handshake</code> 包是<strong>纯 Go（无 cgo）</strong>，所以能在任何平台单测。两端交换的就是
+        <code>EndpointInfo</code>（节选自 <code>handshake.go</code>，以换行分隔的 JSON 帧互发）：</p>
+      <pre><code><span class="k">type</span> <span class="f">EndpointInfo</span> <span class="k">struct</span> {
+    QPN        <span class="k">uint32</span>   <span class="c">// 队列对号</span>
+    PSN        <span class="k">uint32</span>   <span class="c">// 起始包序列号</span>
+    LID        <span class="k">uint16</span>   <span class="c">// InfiniBand LID（RoCE 下为 0）</span>
+    GID        [<span class="s">16</span>]<span class="k">byte</span> <span class="c">// RoCE/IB 全局标识</span>
+    GIDIndex   <span class="k">int</span>      <span class="c">// 对端用的 GID 索引</span>
+    RKey       <span class="k">uint32</span>   <span class="c">// RDMA Write/Read 的远端 key</span>
+    RemoteAddr <span class="k">uint64</span>   <span class="c">// 对端已注册缓冲区的虚拟地址</span>
+}</code></pre>
+      <p>拿到对端的 <code>EndpointInfo</code> 后，自己填好 <code>RCConnParams</code> 调
+        <code>ModifyToInit/RTR/RTS</code>。这正是 perftest 默认采用的方式，工具里用 <code>-p</code> 指定 TCP 握手端口。</p>
+
+      <h2>怎么选</h2>
+      <table>
+        <thead><tr><th>场景</th><th>建议</th></tr></thead>
+        <tbody>
+          <tr><td>一般业务、想省事</td><td>默认 <strong>rdma_cm</strong></td></tr>
+          <tr><td>对标 perftest / 需要完全掌控握手内容</td><td><strong>TCP 握手</strong>（<code>WithHandshake</code> / <code>-p</code>）</td></tr>
+          <tr><td>环境里 rdma_cm 不可用或受限</td><td><strong>TCP 握手</strong></td></tr>
+        </tbody>
+      </table>
+
+      <div class="callout tip">
+        <span class="tag">下一步</span>
+        连接建好后，还能用一组 Option 调性能。下一节讲 <a href="p2-perf.html">性能选项</a>。
+      </div>
+
+      <div id="page-nav" class="page-nav"></div>
+      <div class="foot">gordma 教程</div>
+    </div>
+  </main>
+</div>
+<script src="nav.js"></script>
+</body>
+</html>

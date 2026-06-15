@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>gordma · RoCE 与 GID</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-page="p1-roce">
+<div class="layout">
+  <aside class="sidebar">
+    <a class="brand" href="index.html" style="text-decoration:none">
+      <div class="logo">G</div>
+      <div class="name">gordma</div>
+    </a>
+    <div class="brand-sub">Go 语言 RDMA 网络库 · 教程</div>
+    <nav id="sidebar-nav" class="nav"></nav>
+  </aside>
+  <main class="content">
+    <div class="content-inner">
+      <span class="kicker">第一部分 · 5 / 6</span>
+      <h1>RoCE 与 GID</h1>
+      <p class="lede">RDMA 最早跑在 InfiniBand 专网上，用 <strong>LID</strong> 寻址。
+        而 <strong>RoCE</strong>（RDMA over Converged Ethernet）让 RDMA 跑在普通以太网上，用 <strong>GID</strong> 寻址。
+        理解 GID 和「GID 索引」是 RoCE 组网不踩坑的关键——选错索引是最常见的连不上原因。</p>
+
+      <h2>InfiniBand vs RoCE</h2>
+      <table>
+        <thead><tr><th></th><th>InfiniBand</th><th>RoCE v1</th><th>RoCE v2 <span class="pill green">最常用</span></th></tr></thead>
+        <tbody>
+          <tr><td>底层网络</td><td>IB 专用网络</td><td>以太网（二层）</td><td>以太网 + UDP/IP（可路由）</td></tr>
+          <tr><td>寻址</td><td>LID</td><td>GID（MAC 派生）</td><td>GID（含 IP 信息）</td></tr>
+          <tr><td>跨子网路由</td><td>需 IB 路由器</td><td>不可路由</td><td>可路由（走 IP）</td></tr>
+        </tbody>
+      </table>
+      <p>现在数据中心绝大多数是 <strong>RoCE v2</strong>，因为它复用现有以太网/IP 基础设施、还能跨网段路由。</p>
+
+      <h2>GID 是什么</h2>
+      <p><strong>GID</strong>（Global Identifier）是一个 16 字节的全局地址。在 RoCE v2 下，GID 里编码了 IP 信息，
+        所以可以从 IP 映射出来。在 gordma 里它就是一个定长数组，并带一个规范的字符串格式：</p>
+      <pre><code><span class="k">type</span> GID [<span class="s">16</span>]<span class="k">byte</span>
+
+<span class="c">// 渲染成习惯的 8 组 16 位冒号分隔形式</span>
+<span class="k">func</span> (g GID) <span class="f">String</span>() <span class="k">string</span> {
+    <span class="c">// 形如 fe80:0000:0000:0000:....</span>
+}</code></pre>
+
+      <h2>GID 索引：最容易踩的坑</h2>
+      <div class="callout note">
+        <span class="tag">核心</span>
+        一块网卡的 GID 表有<strong>很多行</strong>，每行对应一种组合：RoCE v1 / v2 × IPv4 / IPv6 × 不同 IP。
+        你必须用<strong>正确的行号（GID 索引）</strong>，否则两端协商不上。
+      </div>
+      <p>典型情况下，<strong>RoCE v2 + IPv4</strong> 往往落在某个固定索引上。本库的示例统一默认
+        <strong>GID 索引 3</strong>（<code>-x 3</code>），这是很多多网卡 RoCE 主机的常见布局，但<strong>不是绝对</strong>——
+        务必用工具确认你机器上的实际索引。</p>
+      <pre><code><span class="c"># 查看每块设备的 GID 表，找到 RoCE v2 / 你要用的 IP 对应的行号</span>
+show_gids
+
+<span class="c"># 典型输出（节选），最后一列 VER=v2、IP 是你要用的网段 → 记下 index</span>
+<span class="c"># DEV     PORT  INDEX  GID                      IPv4         VER</span>
+<span class="c"># mlx5_1  1     3      ::ffff:33.0.226.25       33.0.226.25  v2</span></code></pre>
+
+      <h2>LinkLayer：决定用 GID 还是 LID</h2>
+      <p>查询端口属性（<code>PortAttr</code>）时有个 <code>LinkLayer</code> 字段：</p>
+      <table>
+        <thead><tr><th>LinkLayer</th><th>含义</th><th>寻址方式</th></tr></thead>
+        <tbody>
+          <tr><td><code>"Ethernet"</code></td><td>RoCE</td><td>用 GID（设 <code>IsRoCE=true</code>，填 <code>DestGID</code>/<code>SGIDIndex</code>）</td></tr>
+          <tr><td><code>"InfiniBand"</code></td><td>IB</td><td>用 LID（填 <code>DestLID</code>）</td></tr>
+        </tbody>
+      </table>
+      <p>回头看 <a href="p1-qp.html">QP 状态机</a>里的 <code>RCConnParams.IsRoCE</code>，就是据此选择寻址路径。</p>
+
+      <h2>设备命名约定（示例环境）</h2>
+      <p>本库 examples 假设一个典型的多网卡 RoCE 主机（<code>show_gids</code> 布局）：</p>
+      <ul>
+        <li><code>mlx5_0</code> → CPU 网络（<code>xgbe0</code>）</li>
+        <li><code>mlx5_1</code>..<code>mlx5_8</code> → GPU 网络（<code>xgbe1</code>..<code>xgbe8</code>）</li>
+        <li>每块设备的 RoCE v2 都在 <strong>GID 索引 3</strong></li>
+      </ul>
+      <p>所以示例默认 <code>-d mlx5_1 -x 3</code>（第一块 GPU 网卡 + RoCE v2）；用 <code>-d mlx5_0</code> 切到 CPU 网络。</p>
+
+      <div class="callout tip">
+        <span class="tag">下一步</span>
+        概念齐了。下一节把它们串成 <a href="p1-flow.html">一次 RC 传输的完整流程</a>，
+        然后你就能在第二部分看到 gordma 如何把每一步封装成方法。
+      </div>
+
+      <div id="page-nav" class="page-nav"></div>
+      <div class="foot">gordma 教程</div>
+    </div>
+  </main>
+</div>
+<script src="nav.js"></script>
+</body>
+</html>

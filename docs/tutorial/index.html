@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>gordma 教程 · 概览</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-page="index">
+<div class="layout">
+  <aside class="sidebar">
+    <a class="brand" href="index.html" style="text-decoration:none">
+      <div class="logo">G</div>
+      <div class="name">gordma</div>
+    </a>
+    <div class="brand-sub">Go 语言 RDMA 网络库 · 教程</div>
+    <nav id="sidebar-nav" class="nav"></nav>
+  </aside>
+
+  <main class="content">
+    <div class="content-inner">
+      <span class="kicker">教程概览</span>
+      <h1>gordma：用 Go 写 RDMA 网络程序</h1>
+      <p class="lede">gordma 是对 <strong>libibverbs</strong> 与 <strong>librdmacm</strong>（来自
+        <a href="https://github.com/linux-rdma/rdma-core">rdma-core</a>）的地道 Go 封装，
+        并附带一套仿 <a href="https://github.com/linux-rdma/perftest">perftest</a> 的带宽/时延工具。
+        本教程分三部分，每一节独立成页，可循着左侧目录或页脚的「上一页 / 下一页」顺序阅读。</p>
+
+      <div class="grid">
+        <a class="tile" href="p1-what.html">
+          <div class="t-icon"><i data-lucide="brain"></i></div>
+          <div class="t-title">第一部分 · RDMA 概念</div>
+          <div class="t-desc">内核旁路与零拷贝、Verbs 对象模型、QP 状态机、RC/UD、RoCE 与 GID，最后串成一次完整传输。</div>
+        </a>
+        <a class="tile" href="p2-overview.html">
+          <div class="t-icon"><i data-lucide="package"></i></div>
+          <div class="t-title">第二部分 · gordma 库</div>
+          <div class="t-desc">两层 API 的取舍、底层 verbs 封装、高层 rdmanet、两种连接方式、性能选项与跨平台 stub。</div>
+        </a>
+        <a class="tile" href="p3-cmd.html">
+          <div class="t-icon"><i data-lucide="wrench"></i></div>
+          <div class="t-title">第三部分 · cmd & examples</div>
+          <div class="t-desc">8 个 perftest 风格性能工具的用法与排错，外加 17 个按功能拆分的 rdmanet 示例逐个讲解。</div>
+        </a>
+      </div>
+
+      <h2>这个库适合谁</h2>
+      <p>如果你需要在 Go 程序里使用高性能网络（典型是 RoCE v2 上的 Mellanox/NVIDIA 网卡），
+        又不想直接和 C 的 verbs API 打交道，gordma 给了你两个选择：</p>
+      <ul>
+        <li><strong>底层 <code>gordma</code> 包</strong>：一一对应 rdma-core 的对象（Device、Context、PD、MR、CQ、QP、AH、CompChannel），
+          给你完全的控制权，适合复刻 perftest 这类需要精细操作的场景。</li>
+        <li><strong>高层 <code>rdmanet</code> 包</strong>：像标准库 <code>net</code> 一样的 <code>Dial</code>/<code>Listen</code>，
+          隐藏内存注册、工作请求投递、完成队列轮询和流控，适合直接写业务。</li>
+      </ul>
+
+      <div class="callout tip">
+        <span class="tag">提示</span>
+        全部代码在任何平台都能 <strong>编译</strong>（macOS/Windows 走 stub），但只有装了
+        <code>libibverbs</code>/<code>librdmacm</code> 且有 RDMA 硬件的 Linux 才能真正<strong>运行</strong> RDMA 操作。
+      </div>
+
+      <h2>30 秒上手</h2>
+      <p>用高层 API 写一个回显服务，和标准库 <code>net</code> 几乎一样：</p>
+      <pre><code><span class="c">// 服务端</span>
+ln, _ := rdmanet.<span class="f">Listen</span>(<span class="s">"0.0.0.0:18515"</span>)
+<span class="k">defer</span> ln.<span class="f">Close</span>()
+conn, _ := ln.<span class="f">Accept</span>()
+msg, _ := conn.<span class="f">RecvMsg</span>()      <span class="c">// 一条完整消息，保留边界</span>
+
+<span class="c">// 客户端</span>
+conn, _ := rdmanet.<span class="f">Dial</span>(<span class="s">"10.0.0.1:18515"</span>)
+<span class="k">defer</span> conn.<span class="f">Close</span>()
+_ = conn.<span class="f">SendMsg</span>([]<span class="k">byte</span>(<span class="s">"hello"</span>))</code></pre>
+
+      <p>准备好了吗？从 <a href="p1-what.html">第一部分：什么是 RDMA</a> 开始。</p>
+
+      <div id="page-nav" class="page-nav"></div>
+      <div class="foot">gordma 教程</div>
+    </div>
+  </main>
+</div>
+<script src="nav.js"></script>
+</body>
+</html>

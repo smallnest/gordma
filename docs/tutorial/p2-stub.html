@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>gordma · 跨平台 stub</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-page="p2-stub">
+<div class="layout">
+  <aside class="sidebar">
+    <a class="brand" href="index.html" style="text-decoration:none">
+      <div class="logo">G</div>
+      <div class="name">gordma</div>
+    </a>
+    <div class="brand-sub">Go 语言 RDMA 网络库 · 教程</div>
+    <nav id="sidebar-nav" class="nav"></nav>
+  </aside>
+  <main class="content">
+    <div class="content-inner">
+      <span class="kicker">第二部分 · 7 / 7</span>
+      <h1>跨平台 stub</h1>
+      <p class="lede">RDMA 只在 Linux + cgo + 有库的环境才真正可用。但 gordma 用 Go 的<strong>构建标签</strong>做了优雅处理：
+        代码在 macOS / Windows / <code>CGO_ENABLED=0</code> 下也能编译、跑单元测试，只是 RDMA 调用返回
+        <code>ErrNotSupported</code> 而非崩溃。</p>
+
+      <h2>怎么做到的</h2>
+      <p>同一个 API，按平台编译不同实现文件：</p>
+      <table>
+        <thead><tr><th>文件</th><th>构建标签</th><th>内容</th></tr></thead>
+        <tbody>
+          <tr><td><code>*_linux.go</code></td><td><code>//go:build linux &amp;&amp; cgo</code></td><td>真实实现，cgo 调 libibverbs/librdmacm</td></tr>
+          <tr><td><code>*_stub.go</code></td><td><code>//go:build !linux || !cgo</code></td><td>桩实现，所有入口返回 <code>ErrNotSupported</code></td></tr>
+        </tbody>
+      </table>
+      <div class="callout note">
+        <span class="tag">关键</span>
+        <strong>两种构建导出完全相同的 API</strong>——类型签名、方法名、错误一致。
+        所以引用 gordma 的代码在任何平台都能编译通过，行为差异只在运行时。
+      </div>
+
+      <h2>各平台编译</h2>
+      <pre><code>go build ./...                              <span class="c"># Linux 真实 / macOS 桩</span>
+GOOS=darwin  GOARCH=arm64 go build ./...    <span class="c"># 桩</span>
+GOOS=windows GOARCH=amd64 go build ./...    <span class="c"># 桩</span>
+CGO_ENABLED=0 go build ./...                <span class="c"># 即便在 Linux 也走桩</span></code></pre>
+
+      <h2>运行时判断</h2>
+      <p>用 <code>gordma.Supported()</code> 判断当前 build 能否真正跑 RDMA（来自 <code>doc.go</code>）：</p>
+      <pre><code><span class="k">if</span> !gordma.<span class="f">Supported</span>() {
+    log.<span class="f">Fatal</span>(<span class="s">"RDMA not supported on this platform"</span>)
+}
+<span class="c">// 它只在 Linux + cgo 构建里返回 true</span></code></pre>
+      <p>examples 就是这么做的：在不支持的平台打印
+        <code>RDMA not supported on this platform</code> 然后干净退出，而不是 panic。</p>
+
+      <h2>handshake 包：纯 Go，处处可测</h2>
+      <p>值得单独一提：<code>handshake</code> 包<strong>完全没有 cgo</strong>，因为它做的只是 TCP 上交换 JSON。
+        这意味着握手逻辑能在 macOS 上写单元测试、被 CI 在任意平台覆盖，与 RDMA 硬件解耦。</p>
+
+      <h2>为什么这样设计</h2>
+      <div class="callout tip">
+        <span class="tag">价值</span>
+        <ul style="margin:0.3rem 0 0 1rem">
+          <li>开发者在 MacBook 上就能写代码、跑单测、用 IDE 跳转，不必随时连着一台带网卡的 Linux。</li>
+          <li>CI 能在普通 runner 上做编译检查、跨平台交叉编译、与硬件无关的单元测试。</li>
+          <li>硬件相关的集成测试被单独隔离，只在有 RDMA NIC 的专用机器上跑。</li>
+          <li>整体大幅降低了贡献门槛。</li>
+        </ul>
+      </div>
+      <p>这套约定（<code>*_linux.go</code> / <code>*_stub.go</code> 配对）贯穿根包和 <code>rdmanet</code> 子包，
+        看代码时遇到成对文件就知道是这个模式。</p>
+
+      <div class="callout tip">
+        <span class="tag">下一步</span>
+        库讲完了。进入 <a href="p3-cmd.html">第三部分</a>，看能直接跑的 cmd 性能工具与 examples 示例。
+      </div>
+
+      <div id="page-nav" class="page-nav"></div>
+      <div class="foot">gordma 教程</div>
+    </div>
+  </main>
+</div>
+<script src="nav.js"></script>
+</body>
+</html>

@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>gordma · 总览与定位</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-page="p2-overview">
+<div class="layout">
+  <aside class="sidebar">
+    <a class="brand" href="index.html" style="text-decoration:none">
+      <div class="logo">G</div>
+      <div class="name">gordma</div>
+    </a>
+    <div class="brand-sub">Go 语言 RDMA 网络库 · 教程</div>
+    <nav id="sidebar-nav" class="nav"></nav>
+  </aside>
+  <main class="content">
+    <div class="content-inner">
+      <span class="kicker">第二部分 · 1 / 7</span>
+      <h1>总览与定位</h1>
+      <p class="lede">第一部分讲的对象模型，gordma 几乎一比一映射成了 Go 类型。这一部分介绍库的整体结构与设计取舍。
+        模块路径：<code>github.com/smallnest/gordma</code>。</p>
+
+      <h2>它是什么</h2>
+      <p>gordma 是用 <strong>cgo</strong> 封装 <code>libibverbs</code> 和 <code>librdmacm</code>（来自
+        <a href="https://github.com/linux-rdma/rdma-core">rdma-core</a>）的地道 Go 库，并附带一套仿
+        <a href="https://github.com/linux-rdma/perftest">perftest</a> 的带宽/时延工具。它暴露了完整的 verbs
+        对象模型，并在其上提供一个 <code>net</code> 风格的高层 API。</p>
+
+      <div class="grid">
+        <div class="tile">
+          <div class="t-icon"><i data-lucide="cable"></i></div>
+          <div class="t-title">两套用户态库</div>
+          <div class="t-desc"><code>libibverbs</code>（数据面 verbs）+ <code>librdmacm</code>（连接管理），都来自 rdma-core。</div>
+        </div>
+        <div class="tile">
+          <div class="t-icon"><i data-lucide="code"></i></div>
+          <div class="t-title">地道 Go 封装</div>
+          <div class="t-desc">把 C 对象包成带方法的 Go 类型，用 <code>defer Close()</code> 管理生命周期，错误用 <code>error</code> 返回。</div>
+        </div>
+        <div class="tile">
+          <div class="t-icon"><i data-lucide="ruler"></i></div>
+          <div class="t-title">perftest 对标</div>
+          <div class="t-desc"><code>cmd/</code> 下的工具一一对应 C 版 perftest，便于横向对比性能。</div>
+        </div>
+      </div>
+
+      <h2>运行环境</h2>
+      <div class="callout note">
+        <span class="tag">完整功能</span>
+        Linux + RDMA 硬件（如 RoCE v2 上的 Mellanox/NVIDIA 网卡）+ Go 1.26+，并安装开发库：<br>
+        <code>sudo apt-get install libibverbs-dev librdmacm-dev</code>（Debian/Ubuntu）
+      </div>
+      <p>没有硬件也不要紧——见本部分最后一节 <a href="p2-stub.html">跨平台 stub</a>：代码在 macOS / Windows /
+        <code>CGO_ENABLED=0</code> 下都能编译并跑单元测试，只是 RDMA 调用会返回 <code>ErrNotSupported</code>。</p>
+
+      <h2>构建与测试</h2>
+      <pre><code>go build ./...   <span class="c"># Linux 真实实现 / macOS 走桩</span>
+go vet ./...
+go test ./...    <span class="c"># 与硬件无关的单元测试，任何平台可跑</span></code></pre>
+
+      <h2>包结构一览</h2>
+      <table>
+        <thead><tr><th>包 / 目录</th><th>职责</th></tr></thead>
+        <tbody>
+          <tr><td><code>gordma</code>（根）</td><td>底层 verbs 对象模型：Device/Context/PD/MR/CQ/QP/AH/CompChannel</td></tr>
+          <tr><td><code>rdmanet</code></td><td>高层 net 风格 API：Conn / Listener / PacketConn</td></tr>
+          <tr><td><code>handshake</code></td><td>TCP 带外握手（纯 Go，可任意平台单测）</td></tr>
+          <tr><td><code>perftest</code></td><td>cmd 工具共享的 setup / 连接 / 统计逻辑</td></tr>
+          <tr><td><code>cmd/</code></td><td>8 个 perftest 风格命令行工具</td></tr>
+          <tr><td><code>examples/</code></td><td>17 个按功能拆分的 rdmanet 示例</td></tr>
+        </tbody>
+      </table>
+
+      <div class="callout tip">
+        <span class="tag">下一步</span>
+        理解整个库的钥匙是「两层 API」。下一节讲 <a href="p2-layers.html">底层与高层怎么选</a>。
+      </div>
+
+      <div id="page-nav" class="page-nav"></div>
+      <div class="foot">gordma 教程</div>
+    </div>
+  </main>
+</div>
+<script src="nav.js"></script>
+</body>
+</html>

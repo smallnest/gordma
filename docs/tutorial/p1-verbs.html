@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>gordma · Verbs 对象模型</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-page="p1-verbs">
+<div class="layout">
+  <aside class="sidebar">
+    <a class="brand" href="index.html" style="text-decoration:none">
+      <div class="logo">G</div>
+      <div class="name">gordma</div>
+    </a>
+    <div class="brand-sub">Go 语言 RDMA 网络库 · 教程</div>
+    <nav id="sidebar-nav" class="nav"></nav>
+  </aside>
+  <main class="content">
+    <div class="content-inner">
+      <span class="kicker">第一部分 · 2 / 6</span>
+      <h1>Verbs 对象模型</h1>
+      <p class="lede">RDMA 的编程接口叫 <strong>Verbs</strong>，用户态实现是 <code>libibverbs</code>。
+        它不像 socket 那样只有一个文件描述符，而是一组协作的对象。gordma 的底层包正是逐一封装了它们，
+        所以先把这些名词认全，后面读代码就顺了。</p>
+
+      <h2>对象全景</h2>
+      <table>
+        <thead><tr><th>对象</th><th>全称</th><th>作用</th></tr></thead>
+        <tbody>
+          <tr><td><code>Device</code></td><td>设备</td><td>一块 RDMA 网卡（HCA / Channel Adapter），如 <code>mlx5_0</code>。</td></tr>
+          <tr><td><code>Context</code></td><td>设备上下文</td><td>打开设备后的句柄，后续所有资源都从它派生。</td></tr>
+          <tr><td><code>PD</code></td><td>Protection Domain</td><td>保护域，把 MR / QP 等资源归到同一组，做隔离与权限边界。</td></tr>
+          <tr><td><code>MR</code></td><td>Memory Region</td><td>注册（pin 住）的内存区域，网卡只能访问已注册内存。返回 <code>lkey</code>/<code>rkey</code>。</td></tr>
+          <tr><td><code>CQ</code></td><td>Completion Queue</td><td>完成队列。每个操作完成后，网卡往这里放一个完成事件（WC）。</td></tr>
+          <tr><td><code>QP</code></td><td>Queue Pair</td><td>队列对 = 发送队列(SQ) + 接收队列(RQ)。RDMA 的「连接」端点，类比 socket。</td></tr>
+          <tr><td><code>AH</code></td><td>Address Handle</td><td>地址句柄，UD 传输里描述对端地址。</td></tr>
+          <tr><td><code>CompChannel</code></td><td>Completion Channel</td><td>完成通道，让你能「等待」CQ 上的事件而不必忙等轮询。</td></tr>
+        </tbody>
+      </table>
+      <p>它们之间的派生关系大致是：<code>Device → Context → {PD, CQ}</code>，再由 <code>PD → {MR, QP}</code>。</p>
+      <pre><code>Device
+  └─ Context (ibv_open_device)
+       ├─ PD (ibv_alloc_pd)
+       │    ├─ MR  (ibv_reg_mr)      ← 注册内存，得 lkey/rkey
+       │    └─ QP  (ibv_create_qp)   ← 收发端点
+       ├─ CQ (ibv_create_cq)         ← 完成队列
+       └─ CompChannel (可选)         ← 事件驱动等待 CQ</code></pre>
+
+      <h2>内存为什么必须注册</h2>
+      <p>这是 RDMA 编程绕不开、也最反直觉的一步。网卡要 DMA 访问主存，必须满足两个前提：</p>
+      <ul>
+        <li><strong>内存被 pin 住</strong>：操作系统不能把这页换出或迁移，否则网卡拿到的物理地址会失效。</li>
+        <li><strong>网卡知道这段内存</strong>：把虚拟地址→物理地址的映射、访问权限登记进网卡。</li>
+      </ul>
+      <p>注册（<code>ibv_reg_mr</code>）一次完成上述两件事，返回两把钥匙：</p>
+      <table>
+        <thead><tr><th>钥匙</th><th>用途</th></tr></thead>
+        <tbody>
+          <tr><td><code>lkey</code>（local key）</td><td>本地工作请求引用自己的缓冲区时用。</td></tr>
+          <tr><td><code>rkey</code>（remote key）</td><td>授权<strong>远端</strong>对这段内存做 RDMA Read/Write，需带外发给对方。</td></tr>
+        </tbody>
+      </table>
+      <div class="callout note">
+        <span class="tag">代价</span>
+        注册内存有成本（pin 页 + 建映射），所以高性能程序通常<strong>预先注册一块大缓冲区反复用</strong>，
+        而不是每次收发都注册。gordma 的高层 <code>rdmanet</code> 就替你维护了一池注册好的「bounce buffer」。
+      </div>
+
+      <h2>工作请求与完成队列</h2>
+      <p>RDMA 是<strong>异步</strong>的。你不「调用一个发送函数等它返回」，而是：</p>
+      <ol class="steps">
+        <li>把一个<strong>工作请求（Work Request, WR）</strong>投递（post）到 QP 的发送/接收队列。</li>
+        <li>网卡在后台异步执行它。</li>
+        <li>完成后，网卡往<strong>完成队列 CQ</strong> 里放一个<strong>完成项（Work Completion, WC）</strong>。</li>
+        <li>你<strong>轮询 CQ</strong>（或被 CompChannel 事件唤醒）拿到 WC，确认成功与否。</li>
+      </ol>
+      <p>WC 里带着你 post 时填的 <code>WRID</code>、状态、传输字节数等，所以能把完成项和原始请求对上号。</p>
+
+      <div class="callout tip">
+        <span class="tag">下一步</span>
+        对象里最核心、状态最复杂的是 QP。下一节专门讲 <a href="p1-qp.html">QP 与它的状态机</a>——
+        这是初学者最容易卡住的地方。
+      </div>
+
+      <div id="page-nav" class="page-nav"></div>
+      <div class="foot">gordma 教程</div>
+    </div>
+  </main>
+</div>
+<script src="nav.js"></script>
+</body>
+</html>

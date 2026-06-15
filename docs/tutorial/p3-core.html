@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>gordma · 核心功能示例</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-page="p3-core">
+<div class="layout">
+  <aside class="sidebar">
+    <a class="brand" href="index.html" style="text-decoration:none">
+      <div class="logo">G</div>
+      <div class="name">gordma</div>
+    </a>
+    <div class="brand-sub">Go 语言 RDMA 网络库 · 教程</div>
+    <nav id="sidebar-nav" class="nav"></nav>
+  </aside>
+  <main class="content">
+    <div class="content-inner">
+      <span class="kicker">第三部分 · 5 / 6</span>
+      <h1>核心功能示例</h1>
+      <p class="lede">这一组示例<strong>一个目录演示一个 <code>rdmanet</code> 核心特性</strong>，
+        基本对应第二部分讲的那些 API。想学某个功能，直接读对应目录的 <code>main.go</code> 即可。</p>
+
+      <h2>速查表</h2>
+      <table>
+        <thead><tr><th>目录</th><th>演示的特性</th><th>对应章节</th></tr></thead>
+        <tbody>
+          <tr><td><code>echo-msg</code></td><td>RC 消息语义（<code>SendMsg</code>/<code>RecvMsg</code>），最小起点</td><td><a href="p2-rdmanet.html">高层 rdmanet</a></td></tr>
+          <tr><td><code>echo-stream</code></td><td>字节流适配器（<code>Read</code>/<code>Write</code>，<code>io.ReadWriteCloser</code>）</td><td><a href="p2-rdmanet.html">高层 rdmanet</a></td></tr>
+          <tr><td><code>handshake-dial</code></td><td>TCP 带外握手建连（<code>WithHandshake</code>）</td><td><a href="p2-connect.html">连接方式</a></td></tr>
+          <tr><td><code>packet</code></td><td>UD 数据报（<code>PacketConn</code>，<code>WriteTo</code>/<code>ReadFrom</code>）</td><td><a href="p1-transport.html">RC/UD</a></td></tr>
+          <tr><td><code>batch</code></td><td>批量 I/O 摊薄开销（<code>SendBatch</code>/<code>RecvBatch</code>）</td><td><a href="p2-perf.html">性能选项</a></td></tr>
+          <tr><td><code>zerocopy</code></td><td>零拷贝发送（<code>AllocBuffer</code>/<code>SendBuffer</code>）</td><td><a href="p2-perf.html">性能选项</a></td></tr>
+          <tr><td><code>registry</code></td><td>UD 地址带外发现（<code>NewRegistry</code>/<code>LookupAddr</code>）</td><td><a href="p2-perf.html">性能选项</a></td></tr>
+          <tr><td><code>pollmode</code></td><td>CQ 轮询模式选择（<code>WithPollMode</code>）</td><td><a href="p2-perf.html">性能选项</a></td></tr>
+        </tbody>
+      </table>
+
+      <h2>逐个说明</h2>
+
+      <h3>echo-msg —— 最小起点</h3>
+      <p>RC 消息语义的最小回显：服务端 <code>Accept</code> 后 <code>RecvMsg</code>，客户端 <code>SendMsg</code>。
+        想跑通第一个 RDMA 程序，从它开始。</p>
+      <pre><code>go run ./examples/echo-msg -l 0.0.0.0:18515       <span class="c"># 服务端</span>
+go run ./examples/echo-msg 33.0.226.25:18515      <span class="c"># 客户端</span></code></pre>
+
+      <h3>echo-stream —— 字节流</h3>
+      <p>把 <code>Conn</code> 当 <code>io.ReadWriteCloser</code> 用，演示字节流适配器跨消息边界读字节的行为。
+        与 <code>echo-msg</code> 对照，能直观体会「消息语义 vs 字节流」的差别。</p>
+
+      <h3>handshake-dial —— TCP 握手建连</h3>
+      <p>用 <code>WithHandshake()</code> 走 TCP 带外握手而非默认 rdma_cm。除了多一个 Option，
+        收发代码与 <code>echo-msg</code> 一模一样——印证两种连接方式产出同样的 <code>Conn</code>。</p>
+
+      <h3>packet —— UD 数据报</h3>
+      <p><code>PacketConn</code> 的 <code>WriteTo</code>/<code>ReadFrom</code>，类比 <code>net.UDPConn</code>。
+        UD 无连接，客户端用服务端打印的 <code>Addr</code> 字符串（<code>gid%qpn</code>）来寻址。</p>
+      <pre><code><span class="c"># 服务端启动时打印自己的 Addr，例如 fe80:...:0001%0x1a2b</span>
+go run ./examples/packet
+<span class="c"># 客户端把那串 Addr 传进来</span>
+go run ./examples/packet 'fe80:0000:...:0001%0x1a2b'</code></pre>
+
+      <h3>batch —— 批量 I/O</h3>
+      <p>一次 <code>SendBatch</code> 发多条、一次 <code>RecvBatch</code> 收多条，摊薄每次调用的固定开销。
+        例子里客户端发 8 条，服务端一次性收齐。</p>
+
+      <h3>zerocopy —— 零拷贝发送</h3>
+      <p>填 <code>buf.Bytes()</code> 后调 <code>SendBuffer</code>，直接从预注册内存 DMA 发出，省掉到 bounce buffer 的拷贝。
+        缓冲区按其完整分配长度发送（例子是 64 字节，余下补零）。</p>
+
+      <h3>registry —— UD 地址发现</h3>
+      <p>UD 端点把自己的 <code>Addr</code> 以名字登记到注册表，对端按名字查，免去手动拷贝 Addr。
+        注册表服务本身是纯 Go，无需 RDMA，可单独起。</p>
+
+      <h3>pollmode —— 轮询模式</h3>
+      <p>用 <code>-poll=busy|event</code> 切换 CQ 排空策略，直观对比延迟与 CPU 占用（见
+        <a href="p2-perf.html">性能选项</a>的权衡）。</p>
+
+      <div class="callout tip">
+        <span class="tag">下一步</span>
+        把这些特性组合起来就接近真实用法了。下一节是<a href="p3-scenario.html">场景示例</a>。
+      </div>
+
+      <div id="page-nav" class="page-nav"></div>
+      <div class="foot">gordma 教程</div>
+    </div>
+  </main>
+</div>
+<script src="nav.js"></script>
+</body>
+</html>

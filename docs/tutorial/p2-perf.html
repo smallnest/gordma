@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>gordma · 性能选项</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-page="p2-perf">
+<div class="layout">
+  <aside class="sidebar">
+    <a class="brand" href="index.html" style="text-decoration:none">
+      <div class="logo">G</div>
+      <div class="name">gordma</div>
+    </a>
+    <div class="brand-sub">Go 语言 RDMA 网络库 · 教程</div>
+    <nav id="sidebar-nav" class="nav"></nav>
+  </aside>
+  <main class="content">
+    <div class="content-inner">
+      <span class="kicker">第二部分 · 6 / 7</span>
+      <h1>性能选项</h1>
+      <p class="lede"><code>rdmanet</code> 用<strong>函数选项模式</strong>调优，把 <code>Option</code> 传给
+        <code>Dial</code> / <code>Listen</code> / <code>ListenPacket</code>。这一节过一遍每个选项的含义、默认值和何时该动它。</p>
+
+      <h2>全部选项</h2>
+      <table>
+        <thead><tr><th>Option</th><th>作用</th><th>默认</th></tr></thead>
+        <tbody>
+          <tr><td><code>WithDevice("mlx5_3")</code></td><td>按名字选网卡（CPU 网 vs GPU 网）</td><td>第一块可用</td></tr>
+          <tr><td><code>WithPort(n)</code></td><td>HCA 端口号（1 起）</td><td><code>1</code></td></tr>
+          <tr><td><code>WithGIDIndex(n)</code></td><td>GID 表索引（RoCE v2）</td><td><code>0</code>（示例常用 3）</td></tr>
+          <tr><td><code>WithQueueDepth(n)</code></td><td>队列深度（同时在飞的 WR 数）</td><td><code>128</code></td></tr>
+          <tr><td><code>WithBufferSize(n)</code></td><td>每个 bounce buffer 槽大小（字节）</td><td><code>64 KiB</code></td></tr>
+          <tr><td><code>WithHandshake()</code></td><td>改用 TCP 带外握手</td><td>关（用 rdma_cm）</td></tr>
+          <tr><td><code>WithPollMode(...)</code></td><td>CQ 排空方式</td><td><code>PollEvent</code></td></tr>
+        </tbody>
+      </table>
+      <pre><code>conn, _ := rdmanet.<span class="f">Dial</span>(addr,
+    rdmanet.<span class="f">WithDevice</span>(<span class="s">"mlx5_1"</span>),
+    rdmanet.<span class="f">WithGIDIndex</span>(<span class="s">3</span>),
+    rdmanet.<span class="f">WithQueueDepth</span>(<span class="s">256</span>),
+    rdmanet.<span class="f">WithPollMode</span>(rdmanet.PollBusy),
+)</code></pre>
+
+      <h2>轮询模式：延迟 vs CPU</h2>
+      <p>这是最影响性能特征的旋钮，本质是一道权衡题：</p>
+      <table>
+        <thead><tr><th>模式</th><th>做法</th><th>特点</th></tr></thead>
+        <tbody>
+          <tr><td><code>PollEvent</code><span class="pill green">默认</span></td><td>等完成通道事件（<code>ibv_get_cq_event</code>），被唤醒后批量收割</td><td>CPU 占用低，略有延迟。通用场景首选</td></tr>
+          <tr><td><code>PollBusy</code></td><td>专用 goroutine 忙轮询 CQ</td><td>延迟最低，吃满一个核。延迟敏感场景</td></tr>
+        </tbody>
+      </table>
+      <div class="callout note">
+        <span class="tag">为什么默认 PollEvent</span>
+        事件驱动是对 CPU 友好的通用默认值；忙轮询是延迟敏感用户的<strong>显式</strong>选择。
+        <code>PollEvent</code> 是零值（iota 0），也是文档约定的默认。
+      </div>
+
+      <h2>队列深度与缓冲区大小</h2>
+      <ul>
+        <li><strong><code>WithQueueDepth</code></strong>：允许同时在飞的工作请求数。调大能提升流水线深度、利好高带宽，但占用更多资源。</li>
+        <li><strong><code>WithBufferSize</code></strong>：每个注册槽的大小。消息普遍偏大时调大可减少分片；偏小时调小省内存。</li>
+      </ul>
+
+      <h2>批量 I/O</h2>
+      <p>每次 post/收割都有固定开销，批量 API 把若干消息<strong>在一把锁下</strong>一起处理，摊薄开销，
+        在小消息高频场景显著提升吞吐：</p>
+      <pre><code>conn.<span class="f">SendBatch</span>(msgs)        <span class="c">// 一次发多条</span>
+msgs, _ := conn.<span class="f">RecvBatch</span>(<span class="s">32</span>) <span class="c">// 一次最多收 32 条</span>
+<span class="c">// UD 侧对应 WriteToBatch / ReadFromBatch</span></code></pre>
+
+      <h2>零拷贝发送</h2>
+      <p>默认 <code>SendMsg</code> 会把你的数据拷进库维护的 bounce buffer 再发。
+        如果你能从一块<strong>预注册的缓冲区</strong>直接构造数据，就能省掉这次拷贝：</p>
+      <pre><code>buf, _ := conn.<span class="f">AllocBuffer</span>(<span class="s">4096</span>) <span class="c">// 调用方拥有的预注册 Buffer</span>
+<span class="c">// ……往 buf 里写数据……</span>
+conn.<span class="f">SendBuffer</span>(buf)             <span class="c">// 直接从 buf 发，无 bounce 拷贝</span></code></pre>
+
+      <h2>UD 地址注册表</h2>
+      <p>UD 无连接，发送前要知道对端 <code>Addr</code>。<code>Registry</code> 是个轻量的「名字→Addr」目录，
+        用来带外发现对端（也可以用任意手段分发 <code>Addr.String()</code>）：</p>
+      <pre><code>reg := rdmanet.<span class="f">NewRegistry</span>()
+pc.<span class="f">Register</span>(reg, <span class="s">"node-a"</span>)     <span class="c">// 登记自己</span>
+addr, _ := reg.<span class="f">LookupAddr</span>(<span class="s">"node-b"</span>) <span class="c">// 查别人</span></code></pre>
+
+      <div class="callout tip">
+        <span class="tag">下一步</span>
+        最后一节讲一个工程上的巧思：<a href="p2-stub.html">跨平台 stub</a>——为什么没有网卡也能编译和测试。
+      </div>
+
+      <div id="page-nav" class="page-nav"></div>
+      <div class="foot">gordma 教程</div>
+    </div>
+  </main>
+</div>
+<script src="nav.js"></script>
+</body>
+</html>

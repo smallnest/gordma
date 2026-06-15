@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>gordma · cmd 性能工具</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-page="p3-cmd">
+<div class="layout">
+  <aside class="sidebar">
+    <a class="brand" href="index.html" style="text-decoration:none">
+      <div class="logo">G</div>
+      <div class="name">gordma</div>
+    </a>
+    <div class="brand-sub">Go 语言 RDMA 网络库 · 教程</div>
+    <nav id="sidebar-nav" class="nav"></nav>
+  </aside>
+  <main class="content">
+    <div class="content-inner">
+      <span class="kicker">第三部分 · 1 / 6</span>
+      <h1>cmd 性能工具</h1>
+      <p class="lede">理论讲完了，来看能直接跑的东西。<code>cmd/</code> 下有 8 个独立命令，前 6 个对标 C 版
+        <a href="https://github.com/linux-rdma/perftest">perftest</a>，后 2 个测的是高层 <code>rdmanet</code> API。
+        每个工具<strong>不带地址就是服务端，带对端地址就是客户端</strong>。</p>
+
+      <h2>8 个工具</h2>
+      <table>
+        <thead><tr><th>工具</th><th>对标</th><th>传输</th><th>连接方式</th></tr></thead>
+        <tbody>
+          <tr><td><code>go_send_bw</code></td><td><code>ib_send_bw</code></td><td>RC, UD</td><td>TCP 或 rdma_cm</td></tr>
+          <tr><td><code>go_send_lat</code></td><td><code>ib_send_lat</code></td><td>RC, UD</td><td>TCP 或 rdma_cm</td></tr>
+          <tr><td><code>go_write_bw</code></td><td><code>ib_write_bw</code></td><td>RC</td><td>TCP</td></tr>
+          <tr><td><code>go_write_lat</code></td><td><code>ib_write_lat</code></td><td>RC</td><td>TCP</td></tr>
+          <tr><td><code>go_read_bw</code></td><td><code>ib_read_bw</code></td><td>RC</td><td>TCP</td></tr>
+          <tr><td><code>go_read_lat</code></td><td><code>ib_read_lat</code></td><td>RC</td><td>TCP</td></tr>
+          <tr><td><code>go_rdmanet_bw</code></td><td>—（高层）</td><td>rdmanet</td><td>rdma_cm</td></tr>
+          <tr><td><code>go_rdmanet_lat</code></td><td>—（高层）</td><td>rdmanet</td><td>rdma_cm</td></tr>
+        </tbody>
+      </table>
+
+      <h2>命名规律</h2>
+      <p>名字由「操作 + 指标」拼成，正好对应第一部分讲的操作类型：</p>
+      <div class="grid">
+        <div class="tile">
+          <div class="t-icon"><i data-lucide="handshake"></i></div>
+          <div class="t-title">send</div>
+          <div class="t-desc">双边 Send/Recv，最接近 socket 语义；唯一支持 UD（<code>-c UD</code>）的一组。</div>
+        </div>
+        <div class="tile">
+          <div class="t-icon"><i data-lucide="pencil"></i></div>
+          <div class="t-title">write</div>
+          <div class="t-desc">单边 RDMA Write，发起方直接写进对端内存。</div>
+        </div>
+        <div class="tile">
+          <div class="t-icon"><i data-lucide="book-open"></i></div>
+          <div class="t-title">read</div>
+          <div class="t-desc">单边 RDMA Read，发起方直接从对端内存读。</div>
+        </div>
+      </div>
+      <ul>
+        <li><strong><code>*_bw</code></strong>：测带宽（Gb/s），持续打流、统计吞吐。</li>
+        <li><strong><code>*_lat</code></strong>：测时延（往返），可加 <code>--output=histogram</code> 出完整分布。</li>
+      </ul>
+
+      <h2>它们怎么搭起来的</h2>
+      <p>每个工具的 <code>main.go</code> 都很薄，真正的逻辑在共享的 <code>perftest</code> 包里。以 <code>go_send_bw</code> 为例：</p>
+      <pre><code><span class="k">func</span> <span class="f">run</span>(cfg perftest.Config) <span class="k">error</span> {
+    ep, mr, _ := perftest.<span class="f">SetupTCPOrCM</span>(cfg)  <span class="c">// 建资源 + 握手/CM</span>
+    <span class="k">defer</span> ep.<span class="f">Close</span>(); <span class="k">defer</span> mr.<span class="f">Close</span>()
+    res, _ := perftest.<span class="f">RunSendBW</span>(cfg, ep, mr) <span class="c">// 打流并统计</span>
+    perftest.<span class="f">PrintBW</span>(os.Stdout, res)          <span class="c">// 客户端打印结果</span>
+}</code></pre>
+      <p>也就是说，cmd 工具是第一部分那「七步流程」的完整实操样本——想看底层 API 怎么用，
+        读 <code>perftest/</code> 包是最好的范例。</p>
+
+      <div class="callout tip">
+        <span class="tag">下一步</span>
+        这些工具共享一套命令行参数。下一节是 <a href="p3-flags.html">通用命令行参数</a> 速查。
+      </div>
+
+      <div id="page-nav" class="page-nav"></div>
+      <div class="foot">gordma 教程</div>
+    </div>
+  </main>
+</div>
+<script src="nav.js"></script>
+</body>
+</html>

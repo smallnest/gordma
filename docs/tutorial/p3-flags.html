@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>gordma · 通用命令行参数</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-page="p3-flags">
+<div class="layout">
+  <aside class="sidebar">
+    <a class="brand" href="index.html" style="text-decoration:none">
+      <div class="logo">G</div>
+      <div class="name">gordma</div>
+    </a>
+    <div class="brand-sub">Go 语言 RDMA 网络库 · 教程</div>
+    <nav id="sidebar-nav" class="nav"></nav>
+  </aside>
+  <main class="content">
+    <div class="content-inner">
+      <span class="kicker">第三部分 · 2 / 6</span>
+      <h1>通用命令行参数</h1>
+      <p class="lede"><code>cmd/</code> 下 perftest 风格工具共享同一套参数（解析逻辑在 <code>perftest/config.go</code>）。
+        记住这张表，所有工具的用法就都通了。</p>
+
+      <h2>参数速查</h2>
+      <table>
+        <thead><tr><th>参数</th><th>含义</th><th>默认</th></tr></thead>
+        <tbody>
+          <tr><td><code>-s</code></td><td>消息大小（字节）</td><td>—</td></tr>
+          <tr><td><code>-n</code></td><td>迭代次数</td><td>—</td></tr>
+          <tr><td><code>-d</code></td><td>RDMA 设备名（如 <code>mlx5_3</code>）</td><td>第一块</td></tr>
+          <tr><td><code>-i</code></td><td>HCA 端口号（1 起）</td><td>1</td></tr>
+          <tr><td><code>-p</code></td><td>TCP 握手端口</td><td>—</td></tr>
+          <tr><td><code>-c</code></td><td>传输类型：<code>RC</code> 或 <code>UD</code></td><td>RC</td></tr>
+          <tr><td><code>-R</code></td><td>用 rdma_cm 建连（而非 TCP 握手）</td><td>关</td></tr>
+          <tr><td><code>-t</code></td><td>tx-depth（在飞的发送 WR 数）</td><td>128</td></tr>
+          <tr><td><code>-x</code></td><td>GID 索引</td><td>—（RoCE v2 常用 3）</td></tr>
+          <tr><td><code>--output=histogram</code></td><td>时延工具：打印完整直方图</td><td>—</td></tr>
+        </tbody>
+      </table>
+
+      <h2>分组理解</h2>
+      <p>这些参数大致分四组，对照第一、二部分的概念就好记：</p>
+      <table>
+        <thead><tr><th>分组</th><th>参数</th><th>对应概念</th></tr></thead>
+        <tbody>
+          <tr><td>选硬件</td><td><code>-d</code> / <code>-i</code> / <code>-x</code></td><td>设备 / 端口 / <a href="p1-roce.html">GID 索引</a></td></tr>
+          <tr><td>选传输</td><td><code>-c</code> / <code>-R</code></td><td><a href="p1-transport.html">RC/UD</a> / <a href="p2-connect.html">连接方式</a></td></tr>
+          <tr><td>定负载</td><td><code>-s</code> / <code>-n</code> / <code>-t</code></td><td>消息大小 / 次数 / 队列深度</td></tr>
+          <tr><td>看输出</td><td><code>--output</code></td><td>结果呈现</td></tr>
+        </tbody>
+      </table>
+
+      <div class="callout note">
+        <span class="tag">最易踩坑：-d / -x</span>
+        <code>-d</code> 选的设备和 <code>-x</code> 选的 GID 索引<strong>两端必须对应同一张物理网络、且支持 RoCE v2</strong>，
+        否则握手不上。用 <code>show_gids</code> 确认索引，<code>ip addr</code> 确认设备↔IP 的对应关系。
+      </div>
+
+      <h2>几个常见组合</h2>
+      <pre><code><span class="c"># 64KB 大包带宽，跑 5000 次，指定设备和 GID</span>
+-s 65536 -n 5000 -d mlx5_3 -x 3
+
+<span class="c"># UD 传输的 Send 测试（仅 go_send_* 支持 -c UD）</span>
+-c UD -d mlx5_1 -x 3
+
+<span class="c"># 改用 rdma_cm 而非 TCP 握手</span>
+-R -d mlx5_3 -x 3
+
+<span class="c"># 时延 + 完整直方图</span>
+-d mlx5_3 -x 3 --output=histogram</code></pre>
+
+      <h2>查看帮助</h2>
+      <p>任何工具加 <code>-h</code> 都会打印它支持的参数（解析失败或 <code>-h</code> 时返回相应错误并退出）：</p>
+      <pre><code>./bin/go_send_bw -h</code></pre>
+
+      <div class="callout tip">
+        <span class="tag">下一步</span>
+        参数清楚了，下一节<a href="p3-run-cmd.html">实际跑一遍性能测试</a>，并说清命令里的 IP 到底是谁。
+      </div>
+
+      <div id="page-nav" class="page-nav"></div>
+      <div class="foot">gordma 教程</div>
+    </div>
+  </main>
+</div>
+<script src="nav.js"></script>
+</body>
+</html>
