@@ -32,8 +32,9 @@ import (
 
 // cmID is the platform handle stored in CMConn on Linux.
 type cmID struct {
-	ec *C.struct_rdma_event_channel
-	id *C.struct_rdma_cm_id
+	ec     *C.struct_rdma_event_channel
+	id     *C.struct_rdma_cm_id
+	ownsEC bool // Dial-created conns own their ec; accepted conns share the listener's ec.
 }
 
 // sockaddrIn builds a C sockaddr_in/in6 from a Go *net.TCPAddr into the given
@@ -152,7 +153,7 @@ func getCMEvent(ec *C.struct_rdma_event_channel, want C.enum_rdma_cm_event_type)
 
 // buildConn creates a PD/CQ/QP on the given cm_id and returns a CMConn. The QP
 // is created through rdma_create_qp so the CM drives the state transitions.
-func buildConn(ec *C.struct_rdma_event_channel, id *C.struct_rdma_cm_id, depth int) (*CMConn, error) {
+func buildConn(ec *C.struct_rdma_event_channel, id *C.struct_rdma_cm_id, depth int, ownsEC bool) (*CMConn, error) {
 	pdC := C.ibv_alloc_pd(id.verbs)
 	if pdC == nil {
 		return nil, fmt.Errorf("gordma: ibv_alloc_pd failed: %w", lastErrno())
@@ -179,7 +180,7 @@ func buildConn(ec *C.struct_rdma_event_channel, id *C.struct_rdma_cm_id, depth i
 		pd: &PD{pd: pdC},
 		cq: &CQ{cq: cqC},
 		qp: &QP{qp: id.qp, typ: QPTypeRC},
-		id: cmID{ec: ec, id: id},
+		id: cmID{ec: ec, id: id, ownsEC: ownsEC},
 	}
 	return conn, nil
 }
@@ -194,8 +195,9 @@ func (l *Listener) Accept() (*CMConn, error) {
 	if err != nil {
 		return nil, err
 	}
-	conn, err := buildConn(l.ec, connID, 128)
+	conn, err := buildConn(l.ec, connID, 128, false)
 	if err != nil {
+		C.rdma_destroy_id(connID)
 		return nil, err
 	}
 	var cp C.struct_rdma_conn_param
@@ -204,9 +206,11 @@ func (l *Listener) Accept() (*CMConn, error) {
 	cp.initiator_depth = 1
 	cp.rnr_retry_count = 7
 	if C.rdma_accept(connID, &cp) != 0 {
+		_ = conn.Close()
 		return nil, fmt.Errorf("gordma: rdma_accept failed: %w", lastErrno())
 	}
 	if _, err := getCMEvent(l.ec, C.RDMA_CM_EVENT_ESTABLISHED); err != nil {
+		_ = conn.Close()
 		return nil, err
 	}
 	return conn, nil
@@ -258,7 +262,7 @@ func Dial(addr string, timeout time.Duration) (*CMConn, error) {
 		C.rdma_destroy_event_channel(ec)
 		return nil, err
 	}
-	conn, err := buildConn(ec, id, 128)
+	conn, err := buildConn(ec, id, 128, true)
 	if err != nil {
 		C.rdma_destroy_id(id)
 		C.rdma_destroy_event_channel(ec)
@@ -302,7 +306,9 @@ func (c *CMConn) Close() error {
 		c.id.id = nil
 	}
 	if c.id.ec != nil {
-		C.rdma_destroy_event_channel(c.id.ec)
+		if c.id.ownsEC {
+			C.rdma_destroy_event_channel(c.id.ec)
+		}
 		c.id.ec = nil
 	}
 	return nil
