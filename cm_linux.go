@@ -202,6 +202,7 @@ func (l *Listener) Accept() (*CMConn, error) {
 	C.memset(unsafe.Pointer(&cp), 0, C.sizeof_struct_rdma_conn_param)
 	cp.responder_resources = 1
 	cp.initiator_depth = 1
+	cp.rnr_retry_count = 7
 	if C.rdma_accept(connID, &cp) != 0 {
 		return nil, fmt.Errorf("gordma: rdma_accept failed: %w", lastErrno())
 	}
@@ -268,6 +269,7 @@ func Dial(addr string, timeout time.Duration) (*CMConn, error) {
 	cp.responder_resources = 1
 	cp.initiator_depth = 1
 	cp.retry_count = 7
+	cp.rnr_retry_count = 7
 	if C.rdma_connect(id, &cp) != 0 {
 		return nil, fmt.Errorf("gordma: rdma_connect failed: %w", lastErrno())
 	}
