@@ -60,12 +60,8 @@ func GetDeviceList() ([]*Device, func(), error) {
 
 	n := int(num)
 	devs := make([]*Device, 0, n)
-	// arr is a NULL-terminated array of *ibv_device. Walk it with unsafe.Add
-	// so the pointer arithmetic stays in unsafe.Pointer form (vet rejects
-	// round-tripping through a stored uintptr).
-	ptrSize := unsafe.Sizeof(uintptr(0))
-	for i := 0; i < n; i++ {
-		dp := *(**C.struct_ibv_device)(unsafe.Add(unsafe.Pointer(arr), uintptr(i)*ptrSize))
+	// arr is a NULL-terminated array of *ibv_device; view it as a Go slice.
+	for _, dp := range unsafe.Slice(arr, n) {
 		if dp == nil {
 			break
 		}
