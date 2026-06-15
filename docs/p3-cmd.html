@@ -74,6 +74,23 @@
       <p>也就是说，cmd 工具是第一部分那「七步流程」的完整实操样本——想看底层 API 怎么用，
         读 <code>perftest/</code> 包是最好的范例。</p>
 
+      <h2>高层工具的 <code>--batch</code></h2>
+      <p><code>go_rdmanet_bw</code> 默认用 <code>SendMsg</code> 逐条发送，是<strong>延迟受限</strong>的——同一时刻只有一条消息在飞，
+        吞吐 ≈ 1/单条往返延迟，远喂不满网卡（这也是它默认明显慢于 <code>go_send_bw</code> 的原因）。</p>
+      <p>加上 <code>--batch N</code>（简写 <code>-b N</code>）后，客户端改用 <code>SendBatch</code>、服务端用 <code>RecvBatch</code>，
+        每次保持 <strong>N 条在飞</strong>，接近 perftest 工具的流水线吞吐。配合 <code>--poll busy</code> 去掉事件唤醒延迟效果更好：</p>
+      <pre><code><span class="c"># 服务端（两端 -b 要一致）</span>
+./bin/go_rdmanet_bw -d mlx5_1 -x 3 -b 32
+
+<span class="c"># 客户端：批量 + 忙轮询</span>
+./bin/go_rdmanet_bw -s 65536 -n 1000000 -d mlx5_1 -x 3 -b 32 --poll busy 33.0.226.25:18515</code></pre>
+      <div class="callout note">
+        <span class="tag">仍有差距是正常的</span>
+        即便开了 <code>--batch</code> 和 <code>--poll busy</code>，<code>go_rdmanet_bw</code> 通常仍略低于 <code>go_send_bw</code>——
+        <code>rdmanet</code> 多了消息分帧、信用流控、bounce 拷贝这些为「易用、保留消息边界、带背压」付出的固定成本。
+        这正是<a href="p2-layers.html">两层 API</a> 的取舍：要榨干硬件用底层 <code>gordma</code>（perftest 即范例）。
+      </div>
+
       <div class="callout tip">
         <span class="tag">下一步</span>
         这些工具共享一套命令行参数。下一节是 <a href="p3-flags.html">通用命令行参数</a> 速查。
