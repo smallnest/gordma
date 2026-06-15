@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Implementation Notes — Issue #0045</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #FAF9F6; color: #1a1a1a; padding: 2.5rem 2rem; line-height: 1.7; }
+    .container { max-width: 800px; margin: 0 auto; }
+    h1 { font-size: 1.375rem; font-weight: 700; margin-bottom: 0.25rem; }
+    .meta { color: #8B8680; font-size: 0.8125rem; margin-bottom: 2rem; }
+    h2 { font-size: 1rem; font-weight: 600; margin-top: 2rem; margin-bottom: 0.75rem; padding-bottom: 0.375rem; border-bottom: 1px solid #E8E4DE; display: flex; align-items: center; gap: 0.5rem; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+    .dot.design { background: #5B8A72; } .dot.deviation { background: #D97757; } .dot.tradeoff { background: #4A6FA5; } .dot.question { background: #D4A843; }
+    .item { background: #FFFFFF; border: 1px solid #E8E4DE; border-radius: 8px; padding: 1rem 1.25rem; margin-bottom: 0.75rem; box-shadow: 0 1px 3px rgba(0,0,0,0.03); }
+    .item h3 { font-size: 0.875rem; font-weight: 600; margin-bottom: 0.375rem; }
+    .item p { font-size: 0.8125rem; color: #4A4540; margin-bottom: 0.375rem; }
+    .label { display: inline-block; font-size: 0.6875rem; font-weight: 500; padding: 0.125rem 0.5rem; border-radius: 4px; margin-right: 0.375rem; }
+    .label-design { background: #F5F8F6; color: #5B8A72; border: 1px solid #5B8A72; }
+    .label-deviation { background: #FFF5F0; color: #D97757; border: 1px solid #D97757; }
+    .label-tradeoff { background: #F0F4F8; color: #4A6FA5; border: 1px solid #4A6FA5; }
+    .label-question { background: #FDF8F0; color: #D4A843; border: 1px solid #D4A843; }
+    code { background: #F0EEE9; padding: 0.05rem 0.3rem; border-radius: 3px; font-size: 0.78rem; }
+    .footer { text-align: center; margin-top: 2.5rem; color: #B0AAA4; font-size: 0.6875rem; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Implementation Notes</h1>
+    <p class="meta">Issue <a href="https://github.com/smallnest/gordma/issues/45">#45</a> &mdash; rdmanet: examples 目录分特性示例 &mdash; 2026-06-13</p>
+
+    <h2><span class="dot design"></span> Design Decisions</h2>
+    <div class="item">
+      <h3><span class="label label-design">Decision</span> One independent main package per feature</h3>
+      <p><strong>Ambiguity:</strong> "每个特性一个子目录，各含独立 main.go".</p>
+      <p><strong>Choice:</strong> Eight self-contained <code>package main</code> dirs (echo-msg, echo-stream, handshake-dial, packet, batch, zerocopy, registry, pollmode), each with a README. No shared helper package, so each example reads top-to-bottom.</p>
+      <p><strong>Rationale:</strong> Examples are teaching artifacts; cross-file indirection would hurt readability. Independence also means <code>go build ./examples/...</code> validates each in isolation.</p>
+    </div>
+    <div class="item">
+      <h3><span class="label label-design">Decision</span> Uniform server/client CLI shape with a Supported() guard</h3>
+      <p><strong>Ambiguity:</strong> "server/client 通过 flag 区分" + "运行时打印 ErrNotSupported 友好提示".</p>
+      <p><strong>Choice:</strong> Each example takes <code>-l ADDR</code> for server or a positional <code>HOST:PORT</code> for client, and first checks <code>gordma.Supported()</code>, printing a friendly line and returning cleanly when false.</p>
+      <p><strong>Rationale:</strong> Consistent UX across examples; the guard makes them runnable (no crash) on stub platforms, satisfying the criterion.</p>
+    </div>
+
+    <h2><span class="dot deviation"></span> Deviations</h2>
+    <div class="item">
+      <h3><span class="label label-deviation">Deviation</span> packet/registry use connectionless addressing, not -l/HOST:PORT</h3>
+      <p><strong>Spec:</strong> "server/client 通过 flag 区分".</p>
+      <p><strong>Implemented:</strong> The UD examples (packet, registry) are connectionless, so the client targets the server by its UD <code>Addr</code> string (printed, or looked up via the registry) rather than a listen host:port.</p>
+      <p><strong>Why:</strong> UD has no connection/listen address; forcing a host:port shape would misrepresent the API. They still cleanly split server/client roles via flags.</p>
+    </div>
+
+    <h2><span class="dot tradeoff"></span> Tradeoffs</h2>
+    <div class="item">
+      <h3><span class="label label-tradeoff">Tradeoff</span> zerocopy example sends the full buffer length</h3>
+      <p><strong>Alternatives:</strong> add a length-prefix/trim API to send only the payload, or send the whole registered buffer.</p>
+      <p><strong>Pros/cons:</strong> trimming is friendlier but SendBuffer's v1 contract sends the buffer's full Bytes() length; adding trim would expand the API mid-example.</p>
+      <p><strong>Chosen:</strong> send the full 64-byte buffer (payload + zero padding) and document it. Keeps the example honest about the current SendBuffer semantics.</p>
+    </div>
+
+    <h2><span class="dot question"></span> Open Questions</h2>
+    <div class="item">
+      <h3><span class="label label-question">Question</span> Examples not executed end-to-end</h3>
+      <p><strong>Assumption:</strong> They compile on all platforms (verified: <code>go build ./examples/...</code>, CGO_ENABLED=0, windows cross) and the API usage is correct.</p>
+      <p><strong>Verify:</strong> Running them needs two RDMA nodes; the bench tools (#44) exercise the same API paths under load.</p>
+    </div>
+    <div class="item">
+      <h3><span class="label label-question">Question</span> SendBuffer payload-length ergonomics</h3>
+      <p><strong>Assumption:</strong> Sending the whole buffer is acceptable for the example.</p>
+      <p><strong>Verify:</strong> If users commonly send a partial buffer, consider a <code>SendBufferN(b, n)</code> or a settable length on Buffer in a follow-up.</p>
+    </div>
+
+    <p class="footer">Generated by goal-workflow /note-it</p>
+  </div>
+</body>
+</html>

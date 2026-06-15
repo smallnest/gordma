@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Implementation Notes — Issue #0044</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #FAF9F6; color: #1a1a1a; padding: 2.5rem 2rem; line-height: 1.7; }
+    .container { max-width: 800px; margin: 0 auto; }
+    h1 { font-size: 1.375rem; font-weight: 700; margin-bottom: 0.25rem; }
+    .meta { color: #8B8680; font-size: 0.8125rem; margin-bottom: 2rem; }
+    h2 { font-size: 1rem; font-weight: 600; margin-top: 2rem; margin-bottom: 0.75rem; padding-bottom: 0.375rem; border-bottom: 1px solid #E8E4DE; display: flex; align-items: center; gap: 0.5rem; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+    .dot.design { background: #5B8A72; } .dot.deviation { background: #D97757; } .dot.tradeoff { background: #4A6FA5; } .dot.question { background: #D4A843; }
+    .item { background: #FFFFFF; border: 1px solid #E8E4DE; border-radius: 8px; padding: 1rem 1.25rem; margin-bottom: 0.75rem; box-shadow: 0 1px 3px rgba(0,0,0,0.03); }
+    .item h3 { font-size: 0.875rem; font-weight: 600; margin-bottom: 0.375rem; }
+    .item p { font-size: 0.8125rem; color: #4A4540; margin-bottom: 0.375rem; }
+    .label { display: inline-block; font-size: 0.6875rem; font-weight: 500; padding: 0.125rem 0.5rem; border-radius: 4px; margin-right: 0.375rem; }
+    .label-design { background: #F5F8F6; color: #5B8A72; border: 1px solid #5B8A72; }
+    .label-deviation { background: #FFF5F0; color: #D97757; border: 1px solid #D97757; }
+    .label-tradeoff { background: #F0F4F8; color: #4A6FA5; border: 1px solid #4A6FA5; }
+    .label-question { background: #FDF8F0; color: #D4A843; border: 1px solid #D4A843; }
+    code { background: #F0EEE9; padding: 0.05rem 0.3rem; border-radius: 3px; font-size: 0.78rem; }
+    .footer { text-align: center; margin-top: 2.5rem; color: #B0AAA4; font-size: 0.6875rem; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Implementation Notes</h1>
+    <p class="meta">Issue <a href="https://github.com/smallnest/gordma/issues/44">#44</a> &mdash; rdmanet: 基准工具 go_rdmanet_bw / go_rdmanet_lat &mdash; 2026-06-13</p>
+
+    <h2><span class="dot design"></span> Design Decisions</h2>
+    <div class="item">
+      <h3><span class="label label-design">Decision</span> Standalone flag parsing, not perftest.ParseArgs</h3>
+      <p><strong>Ambiguity:</strong> "与现有 cmd 一致的常用 flag" — reuse perftest's parser or roll new flags?</p>
+      <p><strong>Choice:</strong> The two tools use their own <code>flag.FlagSet</code> with the familiar letters (-d/-i/-x/-s/-n/-p) plus rdmanet-specific <code>-handshake</code> and <code>-poll=busy|event</code>.</p>
+      <p><strong>Rationale:</strong> perftest.Config is tailored to the low-level tools (RC/UD transport, tx-depth, rdma_cm -R); rdmanet's option set is different enough that a small dedicated parser is clearer than bending the perftest one. Flag letters stay consistent for muscle memory.</p>
+    </div>
+    <div class="item">
+      <h3><span class="label label-design">Decision</span> bw = one-way send flood; lat = ping-pong</h3>
+      <p><strong>Ambiguity:</strong> How to measure bandwidth vs latency over a message API.</p>
+      <p><strong>Choice:</strong> <code>go_rdmanet_bw</code> client sends N messages as fast as credits allow and reports Gb/s; <code>go_rdmanet_lat</code> does N send→echo round trips and reports avg/p50/p99/min/max.</p>
+      <p><strong>Rationale:</strong> Mirrors the intent of perftest's *_bw/*_lat split using the high-level SendMsg/RecvMsg surface.</p>
+    </div>
+
+    <h2><span class="dot deviation"></span> Deviations</h2>
+    <div class="item">
+      <h3><span class="label label-deviation">Deviation</span> No throughput comparison number baked in</h3>
+      <p><strong>Spec:</strong> "验证性能开销相对原始 verbs 路径可接受".</p>
+      <p><strong>Implemented:</strong> The tools emit Gb/s and latency percentiles, but no automated comparison against go_send_bw is included.</p>
+      <p><strong>Why:</strong> A meaningful comparison requires running both tool families on real RDMA hardware, which isn't available in this build/CI environment. The tools are the instrument; the measurement is an operator step (documented in their help/output).</p>
+    </div>
+
+    <h2><span class="dot tradeoff"></span> Tradeoffs</h2>
+    <div class="item">
+      <h3><span class="label label-tradeoff">Tradeoff</span> New cmd tools vs. extending perftest</h3>
+      <p><strong>Alternatives:</strong> add an rdmanet mode to the existing six tools, or add two new ones.</p>
+      <p><strong>Pros/cons:</strong> extending risks touching/breaking the existing tools (forbidden by the issue); new tools are isolated and leave the originals untouched.</p>
+      <p><strong>Chosen:</strong> two new tools — the issue explicitly requires the existing six be left unchanged.</p>
+    </div>
+
+    <h2><span class="dot question"></span> Open Questions</h2>
+    <div class="item">
+      <h3><span class="label label-question">Question</span> Bandwidth tool uses RecvMsgBuf serially on the server</h3>
+      <p><strong>Assumption:</strong> Serial recv is enough to measure client send bandwidth; credit flow control bounds in-flight frames.</p>
+      <p><strong>Verify:</strong> On hardware, if the server recv becomes the bottleneck, add RecvBatch to the server loop to better isolate send-side bandwidth.</p>
+    </div>
+    <div class="item">
+      <h3><span class="label label-question">Question</span> Not run on hardware</h3>
+      <p><strong>Assumption:</strong> The tools build and the API calls are correct; verified by build/vet/cross-compile only.</p>
+      <p><strong>Verify:</strong> Run on two RDMA nodes to confirm bandwidth/latency output and to produce the verbs-vs-rdmanet comparison the issue motivates.</p>
+    </div>
+
+    <p class="footer">Generated by goal-workflow /note-it</p>
+  </div>
+</body>
+</html>
