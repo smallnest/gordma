@@ -9,7 +9,9 @@
 # Strip any directory path from the module so binaries are named go_send_bw etc.
 MODULE      := github.com/smallnest/gordma
 BIN_DIR     := bin
+EXAMPLE_DIR := $(BIN_DIR)/examples
 CMDS        := $(notdir $(wildcard cmd/*))
+EXAMPLES    := $(sort $(notdir $(patsubst %/,%,$(dir $(wildcard examples/*/*.go)))))
 GO          ?= go
 GOFLAGS     ?=
 
@@ -22,11 +24,19 @@ STUB_TARGETS := darwin/amd64 darwin/arm64 windows/amd64
 all: vet build test ## Run vet, build, and tests (default)
 
 .PHONY: build
-build: ## Build all packages (cgo on Linux, stub elsewhere)
+build: $(BIN_DIR) $(EXAMPLE_DIR) ## Build cmd/* into bin/ and examples/* into bin/examples/
 	$(GO) build $(GOFLAGS) ./...
+	@for cmd in $(CMDS); do \
+		echo "  building $$cmd"; \
+		$(GO) build $(GOFLAGS) -o $(BIN_DIR)/$$cmd ./cmd/$$cmd || exit 1; \
+	done
+	@for ex in $(EXAMPLES); do \
+		echo "  building examples/$$ex"; \
+		$(GO) build $(GOFLAGS) -o $(EXAMPLE_DIR)/$$ex ./examples/$$ex || exit 1; \
+	done
 
 .PHONY: tools
-tools: $(BIN_DIR) ## Build the six perftest CLIs into bin/
+tools: $(BIN_DIR) ## Build the perftest CLIs into bin/
 	@for cmd in $(CMDS); do \
 		echo "  building $$cmd"; \
 		$(GO) build $(GOFLAGS) -o $(BIN_DIR)/$$cmd ./cmd/$$cmd || exit 1; \
@@ -34,6 +44,9 @@ tools: $(BIN_DIR) ## Build the six perftest CLIs into bin/
 
 $(BIN_DIR):
 	@mkdir -p $(BIN_DIR)
+
+$(EXAMPLE_DIR):
+	@mkdir -p $(EXAMPLE_DIR)
 
 .PHONY: vet
 vet: ## Run go vet
