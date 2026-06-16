@@ -44,6 +44,7 @@ func run(args []string) error {
 		raw       = fs.Bool("raw", false, "use RawConn (low-level, no framing/flow-control) for near-perftest speed")
 		rawOne    = fs.Bool("raw-onebuf", false, "raw: use a single fixed region every iter (like perftest) instead of cycling slots; applies to client send buffer AND server recv buffer")
 		rawSingle = fs.Bool("raw-single", false, "raw client: post one signaled SEND at a time (RawConn.Pipeline) instead of batched submit (PipelineBatch), matching go_send_bw")
+		loop      = fs.Bool("loop", false, "server: keep accepting connections in a loop (one run per client) instead of exiting after one; lets you re-run the client without restarting the server")
 		tcpPort   = fs.IntP("tcp-port", "p", 18515, "TCP listen/connect port for establishment")
 		handshk   = fs.Bool("handshake", false, "use TCP out-of-band handshake instead of rdma_cm")
 		pollMode  = fs.String("poll", "event", "CQ poll mode: busy|event")
@@ -71,7 +72,7 @@ func run(args []string) error {
 		if fs.NArg() > 0 {
 			return runClientRaw(fs.Arg(0), *size, *iters, txDepth, *rawOne, *rawSingle, opts)
 		}
-		return runServerRaw(fmt.Sprintf("0.0.0.0:%d", *tcpPort), *size, txDepth, *rawOne, opts)
+		return runServerRaw(fmt.Sprintf("0.0.0.0:%d", *tcpPort), *size, txDepth, *rawOne, *loop, opts)
 	}
 	opts, err := buildOptions(*device, *port, *gidIndex, *size, *depth, *handshk, *pollMode)
 	if err != nil {
@@ -82,7 +83,7 @@ func run(args []string) error {
 		// client
 		return runClientBW(fs.Arg(0), *size, *iters, *batch, opts)
 	}
-	return runServerBW(addr, *size, *batch, opts)
+	return runServerBW(addr, *size, *batch, *loop, opts)
 }
 
 // rawOptions builds the option set RawConn honors (device/port/gid/depth).
@@ -128,13 +129,26 @@ func buildOptions(device string, port, gidIndex, size, depth int, handshake bool
 	return opts, nil
 }
 
-func runServerBW(addr string, size, batch int, opts []rdmanet.Option) error {
+func runServerBW(addr string, size, batch int, loop bool, opts []rdmanet.Option) error {
 	ln, err := rdmanet.Listen(addr, opts...)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = ln.Close() }()
 	fmt.Printf("go_rdmanet_bw server listening on %s\n", ln.Addr())
+	for {
+		if err := serveOneBW(ln, size, batch); err != nil {
+			return err
+		}
+		if !loop {
+			return nil
+		}
+		fmt.Println("--- waiting for next client (--loop) ---")
+	}
+}
+
+// serveOneBW accepts a single connection and drains it until the client closes.
+func serveOneBW(ln *rdmanet.Listener, size, batch int) error {
 	conn, err := ln.Accept()
 	if err != nil {
 		return err
@@ -280,13 +294,29 @@ func gidDecimal(gid [16]byte) string {
 // oneBuf is set the recv side reuses a single fixed 64KB region every iteration
 // (like perftest's go_send_bw server) instead of cycling through txDepth slots;
 // this keeps the receive-side working set hot to match the perftest baseline.
-func runServerRaw(addr string, size, txDepth int, oneBuf bool, opts []rdmanet.Option) error {
+// When loop is set it keeps accepting connections (one run per client) so the
+// client can be re-run without restarting the server.
+func runServerRaw(addr string, size, txDepth int, oneBuf, loop bool, opts []rdmanet.Option) error {
 	ln, err := rdmanet.ListenRaw(addr, opts...)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = ln.Close() }()
 	fmt.Printf("go_rdmanet_bw (raw) server listening on %s\n", ln.Addr())
+	for {
+		if err := serveOneRaw(ln, size, txDepth, oneBuf); err != nil {
+			return err
+		}
+		if !loop {
+			return nil
+		}
+		fmt.Println("--- waiting for next client (--loop) ---")
+	}
+}
+
+// serveOneRaw accepts a single RawConn, registers an MR, and drains recvs until
+// the client closes.
+func serveOneRaw(ln *rdmanet.RawListener, size, txDepth int, oneBuf bool) error {
 	rc, err := ln.Accept()
 	if err != nil {
 		return err
