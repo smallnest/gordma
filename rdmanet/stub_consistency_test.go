@@ -82,4 +82,30 @@ func TestStubReturnsNotSupported(t *testing.T) {
 	if _, _, err := pc.ReadFromBatch(4); !errors.Is(err, gordma.ErrNotSupported) {
 		t.Errorf("PacketConn.ReadFromBatch: want ErrNotSupported, got %v", err)
 	}
+
+	if _, err := DialRaw("127.0.0.1:1"); !errors.Is(err, gordma.ErrNotSupported) {
+		t.Errorf("DialRaw: want ErrNotSupported, got %v", err)
+	}
+	if _, err := DialRawTimeout("127.0.0.1:1", time.Second); !errors.Is(err, gordma.ErrNotSupported) {
+		t.Errorf("DialRawTimeout: want ErrNotSupported, got %v", err)
+	}
+	if _, err := ListenRaw("127.0.0.1:0"); !errors.Is(err, gordma.ErrNotSupported) {
+		t.Errorf("ListenRaw: want ErrNotSupported, got %v", err)
+	}
+	rc := &RawConn{}
+	if _, err := rc.RegisterMemory(64); !errors.Is(err, gordma.ErrNotSupported) {
+		t.Errorf("RawConn.RegisterMemory: want ErrNotSupported, got %v", err)
+	}
+	if err := rc.PostSend(gordma.SendWR{}); !errors.Is(err, gordma.ErrNotSupported) {
+		t.Errorf("RawConn.PostSend: want ErrNotSupported, got %v", err)
+	}
+	if err := rc.PostRecv(gordma.RecvWR{}); !errors.Is(err, gordma.ErrNotSupported) {
+		t.Errorf("RawConn.PostRecv: want ErrNotSupported, got %v", err)
+	}
+	if _, err := rc.Poll(make([]gordma.WorkCompletion, 1)); !errors.Is(err, gordma.ErrNotSupported) {
+		t.Errorf("RawConn.Poll: want ErrNotSupported, got %v", err)
+	}
+	if err := rc.Pipeline(1, 1, func(uint64) error { return nil }); !errors.Is(err, gordma.ErrNotSupported) {
+		t.Errorf("RawConn.Pipeline: want ErrNotSupported, got %v", err)
+	}
 }

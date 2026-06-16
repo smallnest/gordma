@@ -13,10 +13,13 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
+	"github.com/smallnest/gordma"
 	"github.com/smallnest/gordma/rdmanet"
 	flag "github.com/spf13/pflag"
 )
@@ -38,6 +41,7 @@ func run(args []string) error {
 		iters    = fs.IntP("count", "n", 1000, "number of messages")
 		batch    = fs.IntP("batch", "b", 1, "messages per SendBatch/RecvBatch (1 = one-at-a-time SendMsg)")
 		depth    = fs.Int("depth", 0, "queue depth / credit window (0 = library default 128); set on both ends")
+		raw      = fs.Bool("raw", false, "use RawConn (low-level, no framing/flow-control) for near-perftest speed")
 		tcpPort  = fs.IntP("tcp-port", "p", 18515, "TCP listen/connect port for establishment")
 		handshk  = fs.Bool("handshake", false, "use TCP out-of-band handshake instead of rdma_cm")
 		pollMode = fs.String("poll", "event", "CQ poll mode: busy|event")
@@ -51,6 +55,22 @@ func run(args []string) error {
 	if *depth < 0 {
 		return fmt.Errorf("invalid --depth %d (want >= 0)", *depth)
 	}
+	if *raw {
+		// RawConn always uses the TCP handshake and busy-polls; --batch is the
+		// tx-depth (work requests in flight). Default tx-depth to --depth or 128.
+		txDepth := *batch
+		if txDepth <= 1 {
+			txDepth = *depth
+		}
+		if txDepth <= 0 {
+			txDepth = 128
+		}
+		opts := rawOptions(*device, *port, *gidIndex, *depth)
+		if fs.NArg() > 0 {
+			return runClientRaw(fs.Arg(0), *size, *iters, txDepth, opts)
+		}
+		return runServerRaw(fmt.Sprintf("0.0.0.0:%d", *tcpPort), *size, txDepth, opts)
+	}
 	opts, err := buildOptions(*device, *port, *gidIndex, *size, *depth, *handshk, *pollMode)
 	if err != nil {
 		return err
@@ -60,7 +80,22 @@ func run(args []string) error {
 		// client
 		return runClientBW(fs.Arg(0), *size, *iters, *batch, opts)
 	}
-	return runServerBW(addr, *size, *iters, *batch, opts)
+	return runServerBW(addr, *size, *batch, opts)
+}
+
+// rawOptions builds the option set RawConn honors (device/port/gid/depth).
+func rawOptions(device string, port, gidIndex, depth int) []rdmanet.Option {
+	opts := []rdmanet.Option{
+		rdmanet.WithPort(port),
+		rdmanet.WithGIDIndex(gidIndex),
+	}
+	if device != "" {
+		opts = append(opts, rdmanet.WithDevice(device))
+	}
+	if depth > 0 {
+		opts = append(opts, rdmanet.WithQueueDepth(depth))
+	}
+	return opts
 }
 
 // buildOptions translates the common flags into rdmanet.Options shared by both
@@ -91,7 +126,7 @@ func buildOptions(device string, port, gidIndex, size, depth int, handshake bool
 	return opts, nil
 }
 
-func runServerBW(addr string, size, iters, batch int, opts []rdmanet.Option) error {
+func runServerBW(addr string, size, batch int, opts []rdmanet.Option) error {
 	ln, err := rdmanet.Listen(addr, opts...)
 	if err != nil {
 		return err
@@ -104,23 +139,33 @@ func runServerBW(addr string, size, iters, batch int, opts []rdmanet.Option) err
 	}
 	defer func() { _ = conn.Close() }()
 
+	// Receive until the client closes (io.EOF): the server does not need to know
+	// the client's message count.
+	got := 0
 	if batch > 1 {
-		for got := 0; got < iters; {
+		for {
 			msgs, err := conn.RecvBatch(batch)
+			got += len(msgs)
 			if err != nil {
+				if errors.Is(err, io.EOF) {
+					break
+				}
 				return err
 			}
-			got += len(msgs)
 		}
 	} else {
 		buf := make([]byte, size)
-		for i := 0; i < iters; i++ {
+		for {
 			if _, err := conn.RecvMsgBuf(buf); err != nil {
+				if errors.Is(err, io.EOF) {
+					break
+				}
 				return err
 			}
+			got++
 		}
 	}
-	fmt.Println("server received", iters, "messages")
+	fmt.Println("server received", got, "messages")
 	return nil
 }
 
@@ -168,5 +213,78 @@ func runClientBW(server string, size, iters, batch int, opts []rdmanet.Option) e
 		fmt.Printf("probe: credit-wait=%v (%.1f%%), send-completion-wait=%v (%.1f%%) of %v\n",
 			cw, 100*float64(cw)/float64(elapsed), sw, 100*float64(sw)/float64(elapsed), elapsed)
 	}
+	return nil
+}
+
+// runServerRaw is the RawConn passive side: accept, register one MR, and drain
+// recvs until the client closes (an RNR/transport error ends the run).
+func runServerRaw(addr string, size, txDepth int, opts []rdmanet.Option) error {
+	ln, err := rdmanet.ListenRaw(addr, opts...)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = ln.Close() }()
+	fmt.Printf("go_rdmanet_bw (raw) server listening on %s\n", ln.Addr())
+	rc, err := ln.Accept()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rc.Close() }()
+
+	mr, err := rc.RegisterMemory(size * txDepth)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = mr.Close() }()
+
+	rebuild := func(wrID uint64) gordma.RecvWR {
+		slot := int(wrID) % txDepth
+		return gordma.RecvWR{
+			WRID:   wrID,
+			SGList: []gordma.SGE{gordma.SGEFromMR(mr, slot*size, size)},
+		}
+	}
+	// The client controls the count and closes when done; treat transport
+	// teardown as the end of the run.
+	if err := rc.RecvDrain(1<<62, txDepth, rebuild); err != nil {
+		fmt.Println("raw server stopped:", err)
+	}
+	return nil
+}
+
+// runClientRaw is the RawConn active side: register one MR, then pipeline
+// txDepth signaled SENDs in flight until iters complete — the same loop the
+// perftest go_send_bw tool uses.
+func runClientRaw(server string, size, iters, txDepth int, opts []rdmanet.Option) error {
+	rc, err := rdmanet.DialRaw(server, opts...)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rc.Close() }()
+
+	mr, err := rc.RegisterMemory(size * txDepth)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = mr.Close() }()
+
+	start := time.Now()
+	err = rc.Pipeline(iters, txDepth, func(wrID uint64) error {
+		slot := int(wrID) % txDepth
+		return rc.PostSend(gordma.SendWR{
+			WRID:     wrID,
+			Opcode:   gordma.OpSend,
+			SGList:   []gordma.SGE{gordma.SGEFromMR(mr, slot*size, size)},
+			Signaled: true,
+		})
+	})
+	if err != nil {
+		return err
+	}
+	elapsed := time.Since(start)
+	gbps := float64(size) * float64(iters) * 8 / elapsed.Seconds() / 1e9
+	mpps := float64(iters) / elapsed.Seconds() / 1e6
+	fmt.Printf("raw Send(txDepth=%d): sent %d x %d bytes in %v: %.2f Gb/s, %.3f Mpps\n",
+		txDepth, iters, size, elapsed, gbps, mpps)
 	return nil
 }

@@ -167,31 +167,5 @@ func buildHandshakeConn(cfg config) (*Conn, handshake.EndpointInfo, error) {
 
 // bringUpRC drives the RC QP INIT→RTR→RTS using the exchanged peer info.
 func (c *Conn) bringUpRC(localPSN uint32, peer handshake.EndpointInfo) error {
-	port, err := c.ctx.QueryPort(c.cfg.port)
-	if err != nil {
-		return err
-	}
-	mtu := port.ActiveMTU
-	if mtu <= 0 {
-		mtu = 1024
-	}
-	params := gordma.RCConnParams{
-		DestQPN:   peer.QPN,
-		DestPSN:   peer.PSN,
-		LocalPSN:  localPSN,
-		MTU:       mtu,
-		PortNum:   c.cfg.port,
-		IsRoCE:    port.LinkLayer == "Ethernet",
-		DestLID:   peer.LID,
-		DestGID:   gordma.GID(peer.GID),
-		SGIDIndex: c.cfg.gidIndex,
-		HopLimit:  1,
-	}
-	if err := c.qp.ModifyToInit(c.cfg.port, rcAccess); err != nil {
-		return err
-	}
-	if err := c.qp.ModifyToRTR(params); err != nil {
-		return err
-	}
-	return c.qp.ModifyToRTS(params)
+	return bringUpRCQP(c.qp, c.ctx, c.cfg, localPSN, peer)
 }
