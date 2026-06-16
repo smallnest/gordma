@@ -153,10 +153,11 @@ func (t *transport) startPoller() {
 	t.pollOnce.Do(func() { go t.poll() })
 }
 
-// poll drains the CQ and dispatches completions. Data-SEND completions release
-// a data slot and signal sendDone; credit-SEND completions just free a credit
-// slot. Inbound credit frames release flow-control credits and immediately
-// repost their recv slot; inbound data frames are enqueued for reassembly.
+// poll drains the CQ and dispatches completions. Data-SEND completions return
+// the send slot to sendFree and push one sendDone token (senders wait for those
+// after posting); credit-SEND completions just free a credit slot. Inbound
+// credit frames release flow-control credits and immediately repost their recv
+// slot; inbound data frames are enqueued for reassembly.
 //
 // In PollBusy mode it spins on Poll (yielding on empty polls). In PollEvent
 // mode it arms the CQ and blocks on the completion channel between drains,
@@ -258,6 +259,10 @@ func (t *transport) dispatch(c *gordma.WorkCompletion) error {
 			return nil
 		}
 		select {
+		case t.sendFree <- int(c.WRID):
+		case <-t.closed:
+		}
+		select {
 		case t.sendDone <- struct{}{}:
 		case <-t.closed:
 		}
@@ -305,8 +310,10 @@ func (t *transport) err() error {
 
 // sendMsg fragments p into payload-sized frames and sends them in order, each
 // gated by a flow-control credit so the peer's recv ring is never overrun
-// (avoiding RNR). The message boundary is carried by flagMore: all frames but
-// the last set it. Concurrent senders serialize on sendMu.
+// (avoiding RNR). All frames are posted back-to-back (up to `depth` in flight)
+// and the call then waits for every completion, so it returns only once the
+// whole message has been sent. The message boundary is carried by flagMore: all
+// frames but the last set it. Concurrent senders serialize on sendMu.
 func (t *transport) sendMsg(p []byte) error {
 	if len(p) > maxMessageBytes {
 		return ErrMessageTooLarge
@@ -314,25 +321,41 @@ func (t *transport) sendMsg(p []byte) error {
 	t.startPoller()
 	t.sendMu.Lock()
 	defer t.sendMu.Unlock()
+	return t.postFrames(p)
+}
 
+// postFrames fragments one message and posts every frame without per-frame
+// waiting, then blocks for all their completions. The caller must hold sendMu.
+func (t *transport) postFrames(p []byte) error {
 	frames := fragmentCount(len(p), t.payload)
+	posted, done := 0, 0
 	for f := 0; f < frames; f++ {
+		// Drain completions opportunistically so sendDone cannot fill (and block
+		// the poller) when frames > the channel capacity.
+		done += t.drainSendDone()
 		start := f * t.payload
 		end := start + t.payload
 		if end > len(p) {
 			end = len(p)
 		}
-		more := f < frames-1
-		if err := t.sendFrame(p[start:end], more); err != nil {
+		if err := t.sendFrame(p[start:end], f < frames-1); err != nil {
+			// Wait out the frames already posted so no stray tokens leak into a
+			// later call, then surface the error.
+			_ = t.waitSends(posted - done)
 			return err
 		}
+		posted++
 	}
-	return nil
+	return t.waitSends(posted - done)
 }
 
-// sendFrame posts a single data frame: acquire a credit (flow control), grab a
-// free send slot, write header+payload, post a signaled SEND, and wait for its
-// completion.
+// sendFrame posts a single data frame without waiting for its completion:
+// acquire a credit (flow control), grab a free send slot, write header+payload,
+// and post a signaled SEND. The slot is returned to sendFree by the poller when
+// the completion arrives, and one token is pushed to sendDone; callers
+// (sendMsg/sendBatch) wait for those tokens after posting all their frames, so
+// up to `depth` SENDs can be in flight at once. The WRID is the slot index so
+// dispatch can free the right slot.
 func (t *transport) sendFrame(payload []byte, more bool) error {
 	if !t.credits.acquire() {
 		return t.closedErr()
@@ -343,7 +366,6 @@ func (t *transport) sendFrame(payload []byte, more bool) error {
 	case <-t.closed:
 		return t.closedErr()
 	}
-	defer func() { t.sendFree <- slot }()
 
 	off := slot * t.slotSize
 	hdr := frameHeader{value: uint32(len(payload))}
@@ -360,14 +382,43 @@ func (t *transport) sendFrame(payload []byte, more bool) error {
 		Signaled: true,
 	}
 	if err := t.qp.PostSend(wr); err != nil {
+		// No completion will arrive for a failed post, so return the slot here.
+		select {
+		case t.sendFree <- slot:
+		case <-t.closed:
+		}
 		return err
 	}
-	select {
-	case <-t.sendDone:
-		return nil
-	case <-t.closed:
-		return t.closedErr()
+	return nil
+}
+
+// drainSendDone consumes any send-completion tokens already queued, without
+// blocking, and returns how many it drained. Callers use it while posting to
+// keep the sendDone channel from filling (which would block the poller) when a
+// single call posts more frames than the channel's capacity.
+func (t *transport) drainSendDone() int {
+	n := 0
+	for {
+		select {
+		case <-t.sendDone:
+			n++
+		default:
+			return n
+		}
 	}
+}
+
+// waitSends blocks until n send-completion tokens have been received, or the
+// transport closes (returning the closed error). n may be <= 0 (no-op).
+func (t *transport) waitSends(n int) error {
+	for ; n > 0; n-- {
+		select {
+		case <-t.sendDone:
+		case <-t.closed:
+			return t.closedErr()
+		}
+	}
+	return nil
 }
 
 // sendBuffer transmits a caller-owned, pre-registered Buffer with no copy. The
@@ -531,8 +582,11 @@ func (t *transport) recvMsg() ([]byte, error) {
 }
 
 // sendBatch sends each message in msgs in order, holding sendMu for the whole
-// batch so the frames are not interleaved with another sender's. It returns on
-// the first error. Semantically equivalent to calling sendMsg per message.
+// batch so the frames are not interleaved with another sender's. Every frame of
+// every message is posted back-to-back (up to `depth` in flight) and the call
+// then waits for all completions, so the batch streams through the NIC pipeline
+// rather than stopping after each frame. It returns on the first error.
+// Semantically equivalent to calling sendMsg per message.
 func (t *transport) sendBatch(msgs [][]byte) error {
 	for _, m := range msgs {
 		if len(m) > maxMessageBytes {
@@ -542,20 +596,24 @@ func (t *transport) sendBatch(msgs [][]byte) error {
 	t.startPoller()
 	t.sendMu.Lock()
 	defer t.sendMu.Unlock()
+	posted, done := 0, 0
 	for _, m := range msgs {
 		frames := fragmentCount(len(m), t.payload)
 		for f := 0; f < frames; f++ {
+			done += t.drainSendDone()
 			start := f * t.payload
 			end := start + t.payload
 			if end > len(m) {
 				end = len(m)
 			}
 			if err := t.sendFrame(m[start:end], f < frames-1); err != nil {
+				_ = t.waitSends(posted - done)
 				return err
 			}
+			posted++
 		}
 	}
-	return nil
+	return t.waitSends(posted - done)
 }
 
 // recvBatch returns up to max complete messages. It blocks for the first
