@@ -35,6 +35,8 @@ type QP struct {
 	// allocates nothing in steady state.
 	sendSG sgeScratch
 	recvSG sgeScratch
+	// batch holds reusable C-scalar arrays for PostSendBatch.
+	batch batchScratch
 }
 
 // CreateQP creates a queue pair in the RESET state on this PD.

@@ -259,6 +259,26 @@ func (rc *RawConn) RecvDrain(iters, txDepth int, rebuild func(wrID uint64) gordm
 	return drain(iters, txDepth, post, rc.cq.Poll)
 }
 
+// PostSendBatch submits several send WRs in one call (see gordma.QP.PostSendBatch
+// for the supported shape: single SGE, uniform RC opcode, no inline/UD/imm).
+func (rc *RawConn) PostSendBatch(wrs []gordma.SendWR) error {
+	if rc == nil || rc.qp == nil {
+		return gordma.ErrClosed
+	}
+	return rc.qp.PostSendBatch(wrs)
+}
+
+// PipelineBatch is the batched-submit variant of Pipeline: it keeps txDepth
+// signaled WRs in flight but refills in groups via PostSendBatch, cutting the
+// per-WR cgo crossing for higher message rate. build(wrID) returns the WR for a
+// given slot.
+func (rc *RawConn) PipelineBatch(iters, txDepth int, build func(wrID uint64) gordma.SendWR) error {
+	if rc == nil || rc.qp == nil || rc.cq == nil {
+		return gordma.ErrClosed
+	}
+	return pipelineBatch(iters, txDepth, build, rc.qp.PostSendBatch, rc.cq.Poll)
+}
+
 // Close releases the QP/CQ/PD/Context. It is idempotent.
 func (rc *RawConn) Close() error {
 	if rc == nil {

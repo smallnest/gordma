@@ -269,14 +269,14 @@ func runClientRaw(server string, size, iters, txDepth int, opts []rdmanet.Option
 	defer func() { _ = mr.Close() }()
 
 	start := time.Now()
-	err = rc.Pipeline(iters, txDepth, func(wrID uint64) error {
+	err = rc.PipelineBatch(iters, txDepth, func(wrID uint64) gordma.SendWR {
 		slot := int(wrID) % txDepth
-		return rc.PostSend(gordma.SendWR{
+		return gordma.SendWR{
 			WRID:     wrID,
 			Opcode:   gordma.OpSend,
 			SGList:   []gordma.SGE{gordma.SGEFromMR(mr, slot*size, size)},
 			Signaled: true,
-		})
+		}
 	})
 	if err != nil {
 		return err
@@ -284,7 +284,7 @@ func runClientRaw(server string, size, iters, txDepth int, opts []rdmanet.Option
 	elapsed := time.Since(start)
 	gbps := float64(size) * float64(iters) * 8 / elapsed.Seconds() / 1e9
 	mpps := float64(iters) / elapsed.Seconds() / 1e6
-	fmt.Printf("raw Send(txDepth=%d): sent %d x %d bytes in %v: %.2f Gb/s, %.3f Mpps\n",
+	fmt.Printf("raw-batch Send(txDepth=%d): sent %d x %d bytes in %v: %.2f Gb/s, %.3f Mpps\n",
 		txDepth, iters, size, elapsed, gbps, mpps)
 	return nil
 }

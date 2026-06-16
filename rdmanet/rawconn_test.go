@@ -100,3 +100,58 @@ func TestDrainCompletesExactIters(t *testing.T) {
 		t.Errorf("posted = %d, want %d", posted, iters)
 	}
 }
+
+func TestPipelineBatchCompletesExactIters(t *testing.T) {
+	const iters, txDepth = 100, 8
+	built, completed := 0, 0
+	inflight, maxInflight := 0, 0
+	batchCalls := 0
+	build := func(wrID uint64) gordma.SendWR { built++; return gordma.SendWR{WRID: wrID} }
+	postBatch := func(wrs []gordma.SendWR) error {
+		batchCalls++
+		inflight += len(wrs)
+		if inflight > maxInflight {
+			maxInflight = inflight
+		}
+		return nil
+	}
+	// Complete in groups of up to 4 per poll to exercise batched refills.
+	poll := func(wc []gordma.WorkCompletion) (int, error) {
+		k := inflight
+		if k > 4 {
+			k = 4
+		}
+		for i := 0; i < k; i++ {
+			wc[i] = gordma.WorkCompletion{Status: gordma.WCSuccess}
+		}
+		inflight -= k
+		completed += k
+		return k, nil
+	}
+	if err := pipelineBatch(iters, txDepth, build, postBatch, poll); err != nil {
+		t.Fatalf("pipelineBatch: %v", err)
+	}
+	if built != iters {
+		t.Errorf("built = %d, want %d", built, iters)
+	}
+	if completed != iters {
+		t.Errorf("completed = %d, want %d", completed, iters)
+	}
+	if maxInflight > txDepth {
+		t.Errorf("max in-flight = %d, exceeds txDepth %d", maxInflight, txDepth)
+	}
+	// Batched submit must use far fewer calls than one-per-WR.
+	if batchCalls >= iters {
+		t.Errorf("batch calls = %d, expected far fewer than %d", batchCalls, iters)
+	}
+}
+
+func TestPipelineBatchPropagatesError(t *testing.T) {
+	want := errors.New("batch boom")
+	build := func(wrID uint64) gordma.SendWR { return gordma.SendWR{WRID: wrID} }
+	postBatch := func(wrs []gordma.SendWR) error { return want }
+	poll := func([]gordma.WorkCompletion) (int, error) { return 0, nil }
+	if err := pipelineBatch(10, 4, build, postBatch, poll); !errors.Is(err, want) {
+		t.Errorf("pipelineBatch error: got %v, want %v", err, want)
+	}
+}

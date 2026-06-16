@@ -72,6 +72,14 @@ func (rc *RawConn) Pipeline(iters, txDepth int, post func(wrID uint64) error) er
 	return gordma.ErrNotSupported
 }
 
+// PostSendBatch returns ErrNotSupported on the stub build.
+func (rc *RawConn) PostSendBatch(wrs []gordma.SendWR) error { return gordma.ErrNotSupported }
+
+// PipelineBatch returns ErrNotSupported on the stub build.
+func (rc *RawConn) PipelineBatch(iters, txDepth int, build func(wrID uint64) gordma.SendWR) error {
+	return gordma.ErrNotSupported
+}
+
 // RecvDrain returns ErrNotSupported on the stub build.
 func (rc *RawConn) RecvDrain(iters, txDepth int, rebuild func(wrID uint64) gordma.RecvWR) error {
 	return gordma.ErrNotSupported

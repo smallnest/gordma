@@ -73,6 +73,65 @@ func pipeline(
 	return nil
 }
 
+// pipelineBatch is the batched variant of pipeline: it keeps up to txDepth
+// signaled WRs in flight but submits refills in groups — on each poll it
+// reaps k completions and re-posts them in a single postBatch call, cutting
+// the per-WR cgo crossing. build(wrID) returns the WR for a given slot;
+// postBatch submits a slice of WRs in one call. It is generic over the
+// build/postBatch/poll funcs for testing.
+func pipelineBatch(
+	iters, txDepth int,
+	build func(wrID uint64) gordma.SendWR,
+	postBatch func(wrs []gordma.SendWR) error,
+	poll func(wc []gordma.WorkCompletion) (int, error),
+) error {
+	if iters <= 0 {
+		return nil
+	}
+	if txDepth < 1 {
+		txDepth = 1
+	}
+	if txDepth > iters {
+		txDepth = iters
+	}
+	wc := make([]gordma.WorkCompletion, txDepth)
+	batch := make([]gordma.SendWR, 0, txDepth)
+	posted, completed := 0, 0
+
+	// Prime the pipeline with one full batch of txDepth WRs.
+	for posted < txDepth {
+		batch = append(batch, build(uint64(posted)))
+		posted++
+	}
+	if err := postBatch(batch); err != nil {
+		return err
+	}
+
+	for completed < iters {
+		n, err := poll(wc)
+		if err != nil {
+			return err
+		}
+		batch = batch[:0]
+		for i := 0; i < n; i++ {
+			if !wc[i].Status.OK() {
+				return &gordma.CompletionError{Status: wc[i].Status, WRID: wc[i].WRID}
+			}
+			completed++
+			if posted < iters {
+				batch = append(batch, build(uint64(posted)))
+				posted++
+			}
+		}
+		if len(batch) > 0 {
+			if err := postBatch(batch); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // drain runs the passive (receive) side of the throughput loop: pre-post
 // txDepth receive work requests, then reap completions until iters have
 // arrived, re-posting a fresh recv (via rebuild) on each completion. It is
