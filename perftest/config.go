@@ -72,6 +72,9 @@ type Config struct {
 	// ServerAddr, when non-empty, runs in client mode targeting this address;
 	// empty runs in server mode.
 	ServerAddr string
+	// Loop, in server mode, keeps serving one client after another instead of
+	// exiting after the first run. Ignored in client mode.
+	Loop bool
 }
 
 // IsServer reports whether this config runs the server side (no peer address).
@@ -152,6 +155,7 @@ func ParseArgs(toolName string, args []string, out io.Writer) (Config, error) {
 	fs.BoolVarP(&useCM, "rdma-cm", "R", false, "use rdma_cm for connection establishment")
 	var output string
 	fs.StringVar(&output, "output", "", "extra output mode; set to 'histogram' for full latency histogram")
+	fs.BoolVar(&cfg.Loop, "loop", false, "server: keep serving clients in a loop (one run per client) instead of exiting after one")
 
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err

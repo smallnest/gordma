@@ -25,6 +25,22 @@ func main() {
 }
 
 func run(cfg perftest.Config) error {
+	if cfg.IsServer() && cfg.Loop {
+		// Serve clients one after another until interrupted. Each iteration
+		// sets up a fresh connection, drains one run, and tears it down.
+		for {
+			if err := serveOnce(cfg); err != nil {
+				return err
+			}
+			fmt.Fprintln(os.Stderr, "--- waiting for next client (--loop) ---")
+		}
+	}
+	return serveOnce(cfg)
+}
+
+// serveOnce runs a single benchmark: set up the connection, run the Send/Recv
+// bandwidth transfer, and (client only) print the result.
+func serveOnce(cfg perftest.Config) error {
 	ep, mr, err := perftest.SetupTCPOrCM(cfg)
 	if err != nil {
 		return err
