@@ -22,6 +22,14 @@ type RawConn struct {
 	qp   *gordma.QP
 	peer handshake.EndpointInfo
 
+	// local mirrors the locally-generated endpoint info exchanged at bring-up,
+	// and cfg/port snapshot the device/link attributes, so Info can report the
+	// perftest-style header without re-querying.
+	local  handshake.EndpointInfo
+	device string
+	link   string
+	mtu    int
+
 	// Lightweight loop probes (enabled when GORDMA_PROBE is set). The Pipeline/
 	// RecvDrain drivers run on a single goroutine, so plain counters suffice;
 	// they split wall time between the post path (CPU/cgo to submit WRs) and the
@@ -127,11 +135,22 @@ func (l *RawListener) Close() error {
 // RegisterMemory — and never binds a completion channel.
 func buildRawConn(cfg config) (*RawConn, handshake.EndpointInfo, error) {
 	var zero handshake.EndpointInfo
-	ctx, pd, port, gid, err := openDeviceRC(cfg)
+	ctx, pd, port, gid, devName, err := openDeviceRC(cfg)
 	if err != nil {
 		return nil, zero, err
 	}
-	rc := &RawConn{ctx: ctx, pd: pd, probe: os.Getenv("GORDMA_PROBE") != ""}
+	mtu := port.ActiveMTU
+	if mtu <= 0 {
+		mtu = 1024
+	}
+	rc := &RawConn{
+		ctx:    ctx,
+		pd:     pd,
+		probe:  os.Getenv("GORDMA_PROBE") != "",
+		device: devName,
+		link:   port.LinkLayer,
+		mtu:    mtu,
+	}
 
 	cq, err := ctx.CreateCQ(cfg.queueDepth*2+1, nil) // busy-poll: no comp channel
 	if err != nil {
@@ -165,6 +184,7 @@ func buildRawConn(cfg config) (*RawConn, handshake.EndpointInfo, error) {
 		// RKey/RemoteAddr are filled by RegisterMemory's first MR if the caller
 		// wants the peer to target it; for Send/Recv they are unused.
 	}
+	rc.local = local
 	return rc, local, nil
 }
 
@@ -353,6 +373,33 @@ func (rc *RawConn) ProbeStats() (post, poll time.Duration) {
 	return time.Duration(rc.postNs), time.Duration(rc.pollNs)
 }
 
+// Info returns the established connection's device/link attributes and the
+// local/remote RC addressing, for printing a perftest-style (ib_send_bw)
+// header. It is meaningful only after the connection is up.
+func (rc *RawConn) Info() RawConnInfo {
+	if rc == nil {
+		return RawConnInfo{}
+	}
+	return RawConnInfo{
+		Device:    rc.device,
+		LinkLayer: rc.link,
+		MTU:       rc.mtu,
+		GIDIndex:  rc.local.GIDIndex,
+		Local: RawAddr{
+			LID: rc.local.LID,
+			QPN: rc.local.QPN,
+			PSN: rc.local.PSN,
+			GID: rc.local.GID,
+		},
+		Remote: RawAddr{
+			LID: rc.peer.LID,
+			QPN: rc.peer.QPN,
+			PSN: rc.peer.PSN,
+			GID: rc.peer.GID,
+		},
+	}
+}
+
 // Close releases the QP/CQ/PD/Context. It is idempotent.
 func (rc *RawConn) Close() error {
 	if rc == nil {
@@ -380,17 +427,18 @@ func (rc *RawConn) Close() error {
 }
 
 // openDeviceRC selects the configured device, opens it, queries the port/GID
-// used for RC bring-up, and allocates a PD. Shared by Conn and RawConn setup.
-func openDeviceRC(cfg config) (*gordma.Context, *gordma.PD, gordma.PortAttr, gordma.GID, error) {
+// used for RC bring-up, and allocates a PD. It also returns the resolved device
+// name (for perftest-style reporting). Shared by Conn and RawConn setup.
+func openDeviceRC(cfg config) (*gordma.Context, *gordma.PD, gordma.PortAttr, gordma.GID, string, error) {
 	var zeroPort gordma.PortAttr
 	var zeroGID gordma.GID
 	devs, free, err := gordma.GetDeviceList()
 	if err != nil {
-		return nil, nil, zeroPort, zeroGID, err
+		return nil, nil, zeroPort, zeroGID, "", err
 	}
 	defer free()
 	if len(devs) == 0 {
-		return nil, nil, zeroPort, zeroGID, gordma.ErrNoDevice
+		return nil, nil, zeroPort, zeroGID, "", gordma.ErrNoDevice
 	}
 	dev := devs[0]
 	if cfg.device != "" {
@@ -402,29 +450,30 @@ func openDeviceRC(cfg config) (*gordma.Context, *gordma.PD, gordma.PortAttr, gor
 			}
 		}
 		if dev == nil {
-			return nil, nil, zeroPort, zeroGID, fmt.Errorf("rdmanet: device %q not found", cfg.device)
+			return nil, nil, zeroPort, zeroGID, "", fmt.Errorf("rdmanet: device %q not found", cfg.device)
 		}
 	}
+	devName := dev.Name()
 	ctx, err := dev.Open()
 	if err != nil {
-		return nil, nil, zeroPort, zeroGID, err
+		return nil, nil, zeroPort, zeroGID, "", err
 	}
 	port, err := ctx.QueryPort(cfg.port)
 	if err != nil {
 		_ = ctx.Close()
-		return nil, nil, zeroPort, zeroGID, err
+		return nil, nil, zeroPort, zeroGID, "", err
 	}
 	gid, err := ctx.QueryGID(cfg.port, cfg.gidIndex)
 	if err != nil {
 		_ = ctx.Close()
-		return nil, nil, zeroPort, zeroGID, err
+		return nil, nil, zeroPort, zeroGID, "", err
 	}
 	pd, err := ctx.AllocPD()
 	if err != nil {
 		_ = ctx.Close()
-		return nil, nil, zeroPort, zeroGID, err
+		return nil, nil, zeroPort, zeroGID, "", err
 	}
-	return ctx, pd, port, gid, nil
+	return ctx, pd, port, gid, devName, nil
 }
 
 // bringUpRCQP drives an RC QP INIT→RTR→RTS using exchanged peer info. Shared by

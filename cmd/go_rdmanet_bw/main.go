@@ -218,6 +218,63 @@ func runClientBW(server string, size, iters, batch int, opts []rdmanet.Option) e
 	return nil
 }
 
+// printPerftestHeader prints the ib_send_bw-style header block describing the
+// connection. The BW/result line is printed separately by printPerftestResult
+// after the run.
+func printPerftestHeader(info rdmanet.RawConnInfo, txDepth int) {
+	const rule = "---------------------------------------------------------------------------------------"
+	link := info.LinkLayer
+	if link == "" {
+		link = "Ethernet"
+	}
+	fmt.Println(rule)
+	fmt.Println("                    Send BW Test")
+	fmt.Printf(" Dual-port       : OFF          Device         : %s\n", info.Device)
+	fmt.Printf(" Number of qps   : 1            Transport type : IB\n")
+	fmt.Printf(" Connection type : RC           Using SRQ      : OFF\n")
+	fmt.Printf(" TX depth        : %d\n", txDepth)
+	fmt.Printf(" CQ Moderation   : 1\n")
+	fmt.Printf(" Mtu             : %d[B]\n", info.MTU)
+	fmt.Printf(" Link type       : %s\n", link)
+	fmt.Printf(" GID index       : %d\n", info.GIDIndex)
+	fmt.Printf(" Max inline data : 0[B]\n")
+	fmt.Printf(" rdma_cm QPs     : OFF\n")
+	fmt.Printf(" Data ex. method : Ethernet\n")
+	fmt.Println(rule)
+	fmt.Printf(" local address: LID %04d QPN 0x%05x PSN 0x%06x\n", info.Local.LID, info.Local.QPN, info.Local.PSN)
+	fmt.Printf(" GID: %s\n", gidDecimal(info.Local.GID))
+	fmt.Printf(" remote address: LID %04d QPN 0x%05x PSN 0x%06x\n", info.Remote.LID, info.Remote.QPN, info.Remote.PSN)
+	fmt.Printf(" GID: %s\n", gidDecimal(info.Remote.GID))
+	fmt.Println(rule)
+}
+
+// printPerftestResult prints the ib_send_bw-style result line. BW average is in
+// MiB/sec (2^20 bytes) and MsgRate in Mpps, matching ib_send_bw's units so the
+// numbers are directly comparable.
+func printPerftestResult(size, iters int, elapsed time.Duration) {
+	const rule = "---------------------------------------------------------------------------------------"
+	secs := elapsed.Seconds()
+	totalBytes := float64(size) * float64(iters)
+	bwMiB := totalBytes / (1024 * 1024) / secs
+	mpps := float64(iters) / secs / 1e6
+	fmt.Printf(" #bytes     #iterations    BW peak[MiB/sec]    BW average[MiB/sec]   MsgRate[Mpps]\n")
+	fmt.Printf(" %-10d %-14d %-19.2f %-21.2f %f\n", size, iters, 0.0, bwMiB, mpps)
+	fmt.Println(rule)
+}
+
+// gidDecimal renders a GID the way ib_send_bw prints it: 16 decimal bytes
+// joined by colons (e.g. 00:00:...:255:255:33:00:226:27).
+func gidDecimal(gid [16]byte) string {
+	var b []byte
+	for i, x := range gid {
+		if i > 0 {
+			b = append(b, ':')
+		}
+		b = append(b, []byte(fmt.Sprintf("%02d", x))...)
+	}
+	return string(b)
+}
+
 // runServerRaw is the RawConn passive side: accept, register one MR, and drain
 // recvs until the client closes (an RNR/transport error ends the run). When
 // oneBuf is set the recv side reuses a single fixed 64KB region every iteration
@@ -235,6 +292,8 @@ func runServerRaw(addr string, size, txDepth int, oneBuf bool, opts []rdmanet.Op
 		return err
 	}
 	defer func() { _ = rc.Close() }()
+
+	printPerftestHeader(rc.Info(), txDepth)
 
 	regSize := size * txDepth
 	if oneBuf {
@@ -284,6 +343,8 @@ func runClientRaw(server string, size, iters, txDepth int, oneBuf, single bool, 
 	}
 	defer func() { _ = rc.Close() }()
 
+	printPerftestHeader(rc.Info(), txDepth)
+
 	regSize := size * txDepth
 	if oneBuf {
 		regSize = size
@@ -319,20 +380,17 @@ func runClientRaw(server string, size, iters, txDepth int, oneBuf, single bool, 
 		return err
 	}
 	elapsed := time.Since(start)
-	gbps := float64(size) * float64(iters) * 8 / elapsed.Seconds() / 1e9
-	mpps := float64(iters) / elapsed.Seconds() / 1e6
-	label := "raw-batch"
+	mode := "raw-batch"
 	if single {
-		label = "raw-single"
+		mode = "raw-single"
 	}
 	if oneBuf {
-		label += "-onebuf"
+		mode += "-onebuf"
 	}
-	fmt.Printf("%s Send(txDepth=%d): sent %d x %d bytes in %v: %.2f Gb/s, %.3f Mpps\n",
-		label, txDepth, iters, size, elapsed, gbps, mpps)
+	printPerftestResult(size, iters, elapsed)
 	if post, poll := rc.ProbeStats(); post > 0 || poll > 0 {
-		fmt.Printf("probe: post=%v (%.1f%%), poll=%v (%.1f%%) of %v\n",
-			post, 100*float64(post)/float64(elapsed), poll, 100*float64(poll)/float64(elapsed), elapsed)
+		fmt.Printf(" probe (%s, txDepth=%d): post=%v (%.1f%%), poll=%v (%.1f%%) of %v\n",
+			mode, txDepth, post, 100*float64(post)/float64(elapsed), poll, 100*float64(poll)/float64(elapsed), elapsed)
 	}
 	return nil
 }

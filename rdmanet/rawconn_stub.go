@@ -88,5 +88,8 @@ func (rc *RawConn) RecvDrain(iters, txDepth int, rebuild func(wrID uint64) gordm
 // ProbeStats returns zero on the stub build.
 func (rc *RawConn) ProbeStats() (post, poll time.Duration) { return 0, 0 }
 
+// Info returns a zero RawConnInfo on the stub build.
+func (rc *RawConn) Info() RawConnInfo { return RawConnInfo{} }
+
 // Close is a no-op on the stub build.
 func (rc *RawConn) Close() error { return nil }
