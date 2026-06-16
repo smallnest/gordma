@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"runtime"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/smallnest/gordma"
 )
@@ -76,6 +78,15 @@ type transport struct {
 
 	peerFin chan struct{} // closed when a FIN frame is received from the peer
 	finOnce sync.Once
+
+	// Lightweight send-path probes (enabled when GORDMA_PROBE is set). They
+	// accumulate nanoseconds spent in the two potential stall points on the
+	// send side: acquiring a flow-control credit (waiting for the peer to
+	// return credits) versus waiting for local send completions. A large
+	// credit share points at receiver-driven flow control as the bottleneck.
+	probe          bool
+	creditWaitNs   atomic.Int64
+	sendDoneWaitNs atomic.Int64
 }
 
 // recvFrame is a completed inbound data frame: the recv slot it landed in and
@@ -126,6 +137,7 @@ func newTransport(pd *gordma.PD, qp *gordma.QP, cq *gordma.CQ, slotSize, depth i
 		creditSlotBase: depth,
 		closed:         make(chan struct{}),
 		peerFin:        make(chan struct{}),
+		probe:          os.Getenv("GORDMA_PROBE") != "",
 	}
 	for i := 0; i < depth; i++ {
 		t.sendFree <- i
@@ -357,7 +369,13 @@ func (t *transport) postFrames(p []byte) error {
 // up to `depth` SENDs can be in flight at once. The WRID is the slot index so
 // dispatch can free the right slot.
 func (t *transport) sendFrame(payload []byte, more bool) error {
-	if !t.credits.acquire() {
+	if t.probe {
+		t0 := time.Now()
+		if !t.credits.acquire() {
+			return t.closedErr()
+		}
+		t.creditWaitNs.Add(int64(time.Since(t0)))
+	} else if !t.credits.acquire() {
 		return t.closedErr()
 	}
 	var slot int
@@ -411,6 +429,14 @@ func (t *transport) drainSendDone() int {
 // waitSends blocks until n send-completion tokens have been received, or the
 // transport closes (returning the closed error). n may be <= 0 (no-op).
 func (t *transport) waitSends(n int) error {
+	if n <= 0 {
+		return nil
+	}
+	var t0 time.Time
+	if t.probe {
+		t0 = time.Now()
+		defer func() { t.sendDoneWaitNs.Add(int64(time.Since(t0))) }()
+	}
 	for ; n > 0; n-- {
 		select {
 		case <-t.sendDone:
@@ -419,6 +445,13 @@ func (t *transport) waitSends(n int) error {
 		}
 	}
 	return nil
+}
+
+// ProbeStats returns the accumulated send-path wait times (credit-acquire vs.
+// send-completion) when probing is enabled via GORDMA_PROBE; both are zero
+// otherwise. Exposed for the bench tools to report where the send side stalls.
+func (t *transport) ProbeStats() (creditWait, sendDoneWait time.Duration) {
+	return time.Duration(t.creditWaitNs.Load()), time.Duration(t.sendDoneWaitNs.Load())
 }
 
 // sendBuffer transmits a caller-owned, pre-registered Buffer with no copy. The

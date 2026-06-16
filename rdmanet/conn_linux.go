@@ -182,6 +182,18 @@ func (c *Conn) transport() (*transport, error) {
 	return c.tr, c.trErr
 }
 
+// ProbeStats reports the send-path wait-time breakdown gathered when the
+// GORDMA_PROBE environment variable is set: time spent acquiring flow-control
+// credits (waiting on the peer) versus waiting for local send completions. Both
+// are zero when probing is disabled or no transport has been created. It is a
+// diagnostic aid for locating send-side stalls.
+func (c *Conn) ProbeStats() (creditWait, sendDoneWait time.Duration) {
+	if c == nil || c.tr == nil {
+		return 0, 0
+	}
+	return c.tr.ProbeStats()
+}
+
 func (c *Conn) isClosed() bool { return c.closed.Load() }
 
 // SendMsg sends p as a single message, preserving its boundary, and blocks

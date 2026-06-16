@@ -157,5 +157,9 @@ func runClientBW(server string, size, iters, batch int, opts []rdmanet.Option) e
 	}
 	fmt.Printf("%s: sent %d x %d bytes in %v: %.2f Gb/s, %.3f Mpps\n",
 		mode, iters, size, elapsed, gbps, mpps)
+	if cw, sw := conn.ProbeStats(); cw > 0 || sw > 0 {
+		fmt.Printf("probe: credit-wait=%v (%.1f%%), send-completion-wait=%v (%.1f%%) of %v\n",
+			cw, 100*float64(cw)/float64(elapsed), sw, 100*float64(sw)/float64(elapsed), elapsed)
+	}
 	return nil
 }
