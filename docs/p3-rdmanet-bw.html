@@ -36,11 +36,13 @@
 
       <div class="callout note">
         <span class="tag">先对齐单位</span>
-        横向比较前务必把单位换算到同一口径，否则会差出 8 倍。本工具与 <code>--raw</code> 输出
-        <strong>Gb/s</strong>（10⁹ bit/s）；Go 版 <code>go_send_bw</code> 输出 <strong>MB/s</strong>（10⁶ byte/s，
-        ×8÷1000 得 Gb/s）；C 版 <code>ib_send_bw</code> 输出 <strong>MiB/s</strong>（2²⁰ byte/s，×2²⁰×8÷10⁹ 得 Gb/s）。
-        同机 64KB 实测换算后约为：<code>ib_send_bw</code> ~390 Gb/s（打满线速）、
-        <code>go_send_bw</code> ~310 Gb/s、<code>RawConn</code> ~210 Gb/s。
+        横向比较前务必把单位换算到同一口径，否则会差出 8 倍。<code>--raw</code> 现在输出
+        <strong>MiB/s</strong>（2²⁰，与 <code>ib_send_bw</code> 同口径，可直接比）；Go 版 <code>go_send_bw</code> 输出
+        <strong>MB/s</strong>（10⁶ byte/s，×8÷1000 得 Gb/s）；C 版 <code>ib_send_bw</code> 输出 <strong>MiB/s</strong>
+        （2²⁰ byte/s，×2²⁰×8÷10⁹ 得 Gb/s）。同机 64KB 多次实测<strong>峰值</strong>换算后约为：<code>ib_send_bw</code>
+        ~392 Gb/s、<code>go_send_bw</code> <strong>~392 Gb/s（可追平 C）</strong>、<code>RawConn</code> ~232 Gb/s。
+        注意这台共享 GPU 机抖动很大（±25%），单次数字不可比，详见
+        <a href="p3-cgo-overhead.html">CGO 开销与原生 RDMA 的差距</a>。
       </div>
 
       <h2>模式一：默认逐条 SendMsg</h2>
@@ -60,14 +62,15 @@
 
       <h2>模式三：--raw 极限吞吐</h2>
       <p>加 <code>--raw</code> 切到 <a href="p2-rawconn.html">RawConn</a>：无封帧、无流控、单 goroutine post+busy-poll，
-        吞吐量级接近底层 <code>perftest</code>（约为 Go 版 <code>go_send_bw</code> 的 0.7 倍、C 版 <code>ib_send_bw</code> 的 0.55 倍——
-        差距主要来自每个 WR 一次 Go→C 的 cgo 跨界，详见 <a href="p3-cgo-overhead.html">为何慢于原生 RDMA</a>，用
-        <code>GORDMA_PROBE=1</code> 可量化）。
+        吞吐量级接近底层 <code>perftest</code>（峰值约为 <code>go_send_bw</code> 的 0.6 倍，但实测两者差距随机器状态在
+        1.05×~1.76× 间波动、某些轮次几乎持平；差距落在<strong>完成到达（poll）</strong>而非 cgo 提交，详见
+        <a href="p3-cgo-overhead.html">CGO 开销与原生 RDMA 的差距</a>，用 <code>GORDMA_PROBE=1</code> 可量化）。
         此模式下 <code>-b</code> 的含义变为 <strong>tx-depth</strong>（in-flight WR 数）。</p>
       <pre><code>./bin/go_rdmanet_bw --raw -d mlx5_1 -x 3 -b 128             <span class="c"># 服务端</span>
 ./bin/go_rdmanet_bw --raw -s 65536 -n 1000000 -d mlx5_1 -x 3 -b 128 33.0.226.25:18515</code></pre>
-      <p>输出形如 <code>raw-batch Send(txDepth=128): sent ... Gb/s, ... Mpps</code>。
-        RawConn 恒用 TCP 握手 + 忙轮询，所以 <code>--poll</code>/<code>--handshake</code> 在此模式被忽略。</p>
+      <p>输出为 ib_send_bw 风格的表格（<code>BW average[MiB/sec]</code> + <code>MsgRate[Mpps]</code>），可与
+        <code>ib_send_bw</code> 直接并排比较。RawConn 恒用 TCP 握手 + 忙轮询，所以
+        <code>--poll</code>/<code>--handshake</code> 在此模式被忽略。</p>
       <div class="callout note">
         <span class="tag">大包 vs 小包</span>
         64KB 大包很快撞到带宽线速（Gb/s 见顶）；要看批量提交对<strong>消息率</strong>的收益，测小包更明显：
