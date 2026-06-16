@@ -2,31 +2,6 @@ package rdmanet
 
 import "github.com/smallnest/gordma"
 
-// RawConnInfo describes an established RawConn for perftest-style reporting
-// (mirroring the header ib_send_bw prints). It is populated by RawConn.Info
-// after the connection is up.
-type RawConnInfo struct {
-	// Device is the resolved RDMA device name (e.g. "mlx5_1").
-	Device string
-	// LinkLayer is "Ethernet" (RoCE) or "InfiniBand".
-	LinkLayer string
-	// MTU is the active path MTU in bytes.
-	MTU int
-	// GIDIndex is the local GID table index used for bring-up.
-	GIDIndex int
-	// Local and Remote are the two endpoints' RC addressing.
-	Local, Remote RawAddr
-}
-
-// RawAddr is one endpoint's RC addressing — the LID/QPN/PSN/GID quartet
-// ib_send_bw prints for the local and remote address.
-type RawAddr struct {
-	LID uint16
-	QPN uint32
-	PSN uint32
-	GID [16]byte
-}
-
 // RawConn is a minimal, high-throughput RC endpoint that trades rdmanet's
 // net-style conveniences for raw speed. Unlike Conn it does NOT frame messages,
 // do credit-based flow control, copy through bounce buffers, or run a

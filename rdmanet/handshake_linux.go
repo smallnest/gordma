@@ -162,6 +162,21 @@ func buildHandshakeConn(cfg config) (*Conn, handshake.EndpointInfo, error) {
 		RKey:       mr.RKey(),
 		RemoteAddr: mr.Addr(),
 	}
+	mtu := port.ActiveMTU
+	if mtu <= 0 {
+		mtu = 1024
+	}
+	c.info = connInfoSnapshot{
+		device:   dev.Name(),
+		link:     port.LinkLayer,
+		mtu:      mtu,
+		gidIndex: cfg.gidIndex,
+		localLID: port.LID,
+		localQPN: qp.QPN(),
+		localPSN: localPSN,
+		localGID: [16]byte(gid),
+		have:     true,
+	}
 	return c, local, nil
 }
 

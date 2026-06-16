@@ -40,6 +40,12 @@ type Conn struct {
 	compCh *gordma.CompChannel
 	peer   *handshake.EndpointInfo
 
+	// info snapshots the device/link/MTU and local endpoint addressing captured
+	// at handshake bring-up, so Info can report the perftest-style header
+	// without re-querying. It is populated only on the handshake path; the
+	// rdma_cm path leaves it zero (librdmacm negotiates addressing internally).
+	info connInfoSnapshot
+
 	localAddr  string
 	remoteAddr string
 
@@ -192,6 +198,61 @@ func (c *Conn) ProbeStats() (creditWait, sendDoneWait time.Duration) {
 		return 0, 0
 	}
 	return c.tr.ProbeStats()
+}
+
+// connInfoSnapshot holds the device/link/MTU and local endpoint addressing
+// captured at handshake bring-up so Conn.Info can report it without re-querying.
+type connInfoSnapshot struct {
+	device   string
+	link     string
+	mtu      int
+	gidIndex int
+	localLID uint16
+	localQPN uint32
+	localPSN uint32
+	localGID [16]byte
+	have     bool
+}
+
+// Info returns the established connection's device/link attributes and the
+// local/remote RC addressing, for printing a perftest-style (ib_send_bw)
+// header. It is fully populated only on the TCP handshake path (WithHandshake);
+// on the rdma_cm path the device/link/MTU and addressing are negotiated inside
+// librdmacm and are not exposed here, so only the local QPN (when reachable via
+// the data path) is filled and the rest are left zero.
+func (c *Conn) Info() ConnInfo {
+	if c == nil {
+		return ConnInfo{}
+	}
+	if !c.info.have {
+		// rdma_cm path: report whatever the data-path QP can give us.
+		var info ConnInfo
+		if qp, _, _ := c.dataPath(); qp != nil {
+			info.Local.QPN = qp.QPN()
+		}
+		return info
+	}
+	info := ConnInfo{
+		Device:    c.info.device,
+		LinkLayer: c.info.link,
+		MTU:       c.info.mtu,
+		GIDIndex:  c.info.gidIndex,
+		Local: EndpointAddr{
+			LID: c.info.localLID,
+			QPN: c.info.localQPN,
+			PSN: c.info.localPSN,
+			GID: c.info.localGID,
+		},
+	}
+	if c.peer != nil {
+		info.Remote = EndpointAddr{
+			LID: c.peer.LID,
+			QPN: c.peer.QPN,
+			PSN: c.peer.PSN,
+			GID: c.peer.GID,
+		}
+	}
+	return info
 }
 
 func (c *Conn) isClosed() bool { return c.closed.Load() }

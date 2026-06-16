@@ -376,22 +376,22 @@ func (rc *RawConn) ProbeStats() (post, poll time.Duration) {
 // Info returns the established connection's device/link attributes and the
 // local/remote RC addressing, for printing a perftest-style (ib_send_bw)
 // header. It is meaningful only after the connection is up.
-func (rc *RawConn) Info() RawConnInfo {
+func (rc *RawConn) Info() ConnInfo {
 	if rc == nil {
-		return RawConnInfo{}
+		return ConnInfo{}
 	}
-	return RawConnInfo{
+	return ConnInfo{
 		Device:    rc.device,
 		LinkLayer: rc.link,
 		MTU:       rc.mtu,
 		GIDIndex:  rc.local.GIDIndex,
-		Local: RawAddr{
+		Local: EndpointAddr{
 			LID: rc.local.LID,
 			QPN: rc.local.QPN,
 			PSN: rc.local.PSN,
 			GID: rc.local.GID,
 		},
-		Remote: RawAddr{
+		Remote: EndpointAddr{
 			LID: rc.peer.LID,
 			QPN: rc.peer.QPN,
 			PSN: rc.peer.PSN,

@@ -141,6 +141,8 @@ func runServerBW(addr string, size, batch int, opts []rdmanet.Option) error {
 	}
 	defer func() { _ = conn.Close() }()
 
+	printPerftestHeader(conn.Info(), batch)
+
 	// Receive until the client closes (io.EOF): the server does not need to know
 	// the client's message count.
 	got := 0
@@ -178,6 +180,8 @@ func runClientBW(server string, size, iters, batch int, opts []rdmanet.Option) e
 	}
 	defer func() { _ = conn.Close() }()
 
+	printPerftestHeader(conn.Info(), batch)
+
 	msg := make([]byte, size)
 	start := time.Now()
 	if batch > 1 {
@@ -202,18 +206,14 @@ func runClientBW(server string, size, iters, batch int, opts []rdmanet.Option) e
 		}
 	}
 	elapsed := time.Since(start)
-	totalBytes := float64(size) * float64(iters)
-	gbps := totalBytes * 8 / elapsed.Seconds() / 1e9
-	mpps := float64(iters) / elapsed.Seconds() / 1e6
 	mode := "SendMsg"
 	if batch > 1 {
 		mode = fmt.Sprintf("SendBatch(%d)", batch)
 	}
-	fmt.Printf("%s: sent %d x %d bytes in %v: %.2f Gb/s, %.3f Mpps\n",
-		mode, iters, size, elapsed, gbps, mpps)
+	printPerftestResult(size, iters, elapsed)
 	if cw, sw := conn.ProbeStats(); cw > 0 || sw > 0 {
-		fmt.Printf("probe: credit-wait=%v (%.1f%%), send-completion-wait=%v (%.1f%%) of %v\n",
-			cw, 100*float64(cw)/float64(elapsed), sw, 100*float64(sw)/float64(elapsed), elapsed)
+		fmt.Printf(" probe (%s): credit-wait=%v (%.1f%%), send-completion-wait=%v (%.1f%%) of %v\n",
+			mode, cw, 100*float64(cw)/float64(elapsed), sw, 100*float64(sw)/float64(elapsed), elapsed)
 	}
 	return nil
 }
@@ -221,7 +221,7 @@ func runClientBW(server string, size, iters, batch int, opts []rdmanet.Option) e
 // printPerftestHeader prints the ib_send_bw-style header block describing the
 // connection. The BW/result line is printed separately by printPerftestResult
 // after the run.
-func printPerftestHeader(info rdmanet.RawConnInfo, txDepth int) {
+func printPerftestHeader(info rdmanet.ConnInfo, txDepth int) {
 	const rule = "---------------------------------------------------------------------------------------"
 	link := info.LinkLayer
 	if link == "" {

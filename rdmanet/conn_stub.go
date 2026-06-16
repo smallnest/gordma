@@ -99,6 +99,9 @@ func (c *Conn) RemoteAddr() string { return "" }
 // ProbeStats returns zero on the stub build.
 func (c *Conn) ProbeStats() (creditWait, sendDoneWait time.Duration) { return 0, 0 }
 
+// Info returns a zero ConnInfo on the stub build.
+func (c *Conn) Info() ConnInfo { return ConnInfo{} }
+
 // ListenPacket returns ErrNotSupported on the stub build.
 func ListenPacket(addr string, opts ...Option) (*PacketConn, error) {
 	_ = applyOptions(opts)
