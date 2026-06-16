@@ -35,15 +35,15 @@ const TOC = [
     ],
   },
   {
-    part: "第三部分 · cmd 与 examples",
+    part: "第三部分 · 工具和示例",
     pages: [
-      { id: "p3-cmd",          title: "cmd 性能工具",      file: "p3-cmd.html" },
-      { id: "p3-rdmanet-bw",   title: "go_rdmanet_bw 详解", file: "p3-rdmanet-bw.html" },
-      { id: "p3-flags",        title: "通用命令行参数",     file: "p3-flags.html" },
-      { id: "p3-run-cmd",      title: "运行性能测试",       file: "p3-run-cmd.html" },
-      { id: "p3-examples-run", title: "运行 examples",     file: "p3-examples-run.html" },
-      { id: "p3-core",         title: "核心功能示例",       file: "p3-core.html" },
-      { id: "p3-scenario",     title: "场景示例",          file: "p3-scenario.html" },
+      { id: "p3-cmd",          title: "cmd 性能工具",       file: "p3-cmd.html",          section: "工具" },
+      { id: "p3-rdmanet-bw",   title: "go_rdmanet_bw 详解", file: "p3-rdmanet-bw.html",   section: "工具" },
+      { id: "p3-flags",        title: "通用命令行参数",     file: "p3-flags.html",        section: "工具" },
+      { id: "p3-run-cmd",      title: "运行性能测试",       file: "p3-run-cmd.html",      section: "工具" },
+      { id: "p3-examples-run", title: "运行示例",          file: "p3-examples-run.html", section: "示例" },
+      { id: "p3-core",         title: "核心功能示例",       file: "p3-core.html",         section: "示例" },
+      { id: "p3-scenario",     title: "场景示例",          file: "p3-scenario.html",     section: "示例" },
     ],
   },
 ];
@@ -74,8 +74,15 @@ function buildSidebar() {
     html += `<a class="nav-part${activeTop}" href="${first.file}">${caret}<span>${group.part}</span></a>`;
     if (hasSub) {
       html += `<div class="sub">`;
+      let lastSection = null;
       for (const p of group.pages) {
-        const active = p.id === cur ? ' class="active"' : "";
+        // Optional second-level grouping within a part (e.g. 工具 / 示例).
+        if (p.section && p.section !== lastSection) {
+          html += `<div class="sub-section">${p.section}</div>`;
+          lastSection = p.section;
+        }
+        const indent = p.section ? " sub-item" : "";
+        const active = p.id === cur ? ` class="active${indent}"` : (indent ? ` class="${indent.trim()}"` : "");
         html += `<a href="${p.file}"${active}>${p.title}</a>`;
       }
       html += `</div>`;

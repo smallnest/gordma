@@ -108,7 +108,7 @@ body {
   opacity: 0;
   transition: max-height 0.22s ease, opacity 0.18s ease;
 }
-.nav-group.open .sub { max-height: 30rem; opacity: 1; }
+.nav-group.open .sub { max-height: 40rem; opacity: 1; }
 .nav-group.open > a.nav-part .caret { transform: rotate(90deg); color: var(--accent); }
 .nav a {
   display: block;
@@ -137,6 +137,13 @@ body {
   color: var(--accent);
   font-weight: 600;
 }
+/* optional second-level grouping label within a part (e.g. 工具 / 示例) */
+.nav .sub-section {
+  font-size: 0.7rem; font-weight: 700; letter-spacing: 0.04em;
+  color: var(--muted); margin: 0.5rem 0 0.2rem; padding-left: 0.95rem;
+}
+.nav .sub-section:first-child { margin-top: 0.1rem; }
+.nav .sub a.sub-item { padding-left: 1.75rem; }
 
 /* ---------- Typography ---------- */
 .kicker {
