@@ -89,7 +89,7 @@ func DialTimeout(addr string, timeout time.Duration, opts ...Option) (*Conn, err
 	if cfg.handshake {
 		return dialHandshake(addr, timeout, cfg)
 	}
-	cm, err := gordma.Dial(addr, timeout)
+	cm, err := gordma.Dial(addr, timeout, gordma.WithCMQueueDepth(cfg.queueDepth))
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +107,7 @@ func Listen(addr string, opts ...Option) (*Listener, error) {
 		}
 		return &Listener{cfg: cfg, hs: hs, addr: addr}, nil
 	}
-	l, err := gordma.Listen(addr)
+	l, err := gordma.Listen(addr, gordma.WithCMQueueDepth(cfg.queueDepth))
 	if err != nil {
 		return nil, err
 	}

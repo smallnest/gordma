@@ -11,7 +11,7 @@ type cmID struct{}
 type Listener struct{}
 
 // Listen returns ErrNotSupported.
-func Listen(addr string) (*Listener, error) { return nil, ErrNotSupported }
+func Listen(addr string, opts ...CMOption) (*Listener, error) { return nil, ErrNotSupported }
 
 // Accept returns ErrNotSupported.
 func (l *Listener) Accept() (*CMConn, error) { return nil, ErrNotSupported }
@@ -20,7 +20,9 @@ func (l *Listener) Accept() (*CMConn, error) { return nil, ErrNotSupported }
 func (l *Listener) Close() error { return nil }
 
 // Dial returns ErrNotSupported.
-func Dial(addr string, timeout time.Duration) (*CMConn, error) { return nil, ErrNotSupported }
+func Dial(addr string, timeout time.Duration, opts ...CMOption) (*CMConn, error) {
+	return nil, ErrNotSupported
+}
 
 // Close is a no-op. It references c.id so the shared CMConn.id field (only
 // populated on the cgo build) is not reported unused on the stub build.

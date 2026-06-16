@@ -81,12 +81,14 @@ func resolveTCPAddr(addr string) (*net.TCPAddr, error) {
 
 // Listener accepts incoming rdma_cm connections.
 type Listener struct {
-	ec *C.struct_rdma_event_channel
-	id *C.struct_rdma_cm_id
+	ec    *C.struct_rdma_event_channel
+	id    *C.struct_rdma_cm_id
+	depth int
 }
 
 // Listen binds an rdma_cm id to addr ("host:port") and starts listening.
-func Listen(addr string) (*Listener, error) {
+func Listen(addr string, opts ...CMOption) (*Listener, error) {
+	cfg := applyCMOptions(opts)
 	tcpAddr, err := resolveTCPAddr(addr)
 	if err != nil {
 		return nil, err
@@ -116,7 +118,7 @@ func Listen(addr string) (*Listener, error) {
 		C.rdma_destroy_event_channel(ec)
 		return nil, fmt.Errorf("gordma: rdma_listen failed: %w", lastErrno())
 	}
-	return &Listener{ec: ec, id: id}, nil
+	return &Listener{ec: ec, id: id, depth: cfg.depth}, nil
 }
 
 // Close stops listening and releases resources.
@@ -158,7 +160,7 @@ func buildConn(ec *C.struct_rdma_event_channel, id *C.struct_rdma_cm_id, depth i
 	if pdC == nil {
 		return nil, fmt.Errorf("gordma: ibv_alloc_pd failed: %w", lastErrno())
 	}
-	cqC := C.ibv_create_cq(id.verbs, C.int(depth), nil, nil, 0)
+	cqC := C.ibv_create_cq(id.verbs, C.int(2*depth+1), nil, nil, 0)
 	if cqC == nil {
 		C.ibv_dealloc_pd(pdC)
 		return nil, fmt.Errorf("gordma: ibv_create_cq failed: %w", lastErrno())
@@ -195,7 +197,7 @@ func (l *Listener) Accept() (*CMConn, error) {
 	if err != nil {
 		return nil, err
 	}
-	conn, err := buildConn(l.ec, connID, 128, false)
+	conn, err := buildConn(l.ec, connID, l.depth, false)
 	if err != nil {
 		C.rdma_destroy_id(connID)
 		return nil, err
@@ -218,7 +220,8 @@ func (l *Listener) Accept() (*CMConn, error) {
 
 // Dial resolves addr, establishes an rdma_cm connection, and returns a CMConn
 // whose QP is in RTS. A zero timeout uses DefaultCMTimeout.
-func Dial(addr string, timeout time.Duration) (*CMConn, error) {
+func Dial(addr string, timeout time.Duration, opts ...CMOption) (*CMConn, error) {
+	cfg := applyCMOptions(opts)
 	if timeout <= 0 {
 		timeout = DefaultCMTimeout
 	}
@@ -262,7 +265,7 @@ func Dial(addr string, timeout time.Duration) (*CMConn, error) {
 		C.rdma_destroy_event_channel(ec)
 		return nil, err
 	}
-	conn, err := buildConn(ec, id, 128, true)
+	conn, err := buildConn(ec, id, cfg.depth, true)
 	if err != nil {
 		C.rdma_destroy_id(id)
 		C.rdma_destroy_event_channel(ec)
