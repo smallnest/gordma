@@ -79,6 +79,14 @@ type transport struct {
 	peerFin chan struct{} // closed when a FIN frame is received from the peer
 	finOnce sync.Once
 
+	// Batched credit return (recv path; guarded by recvMu). Returning a credit
+	// to the peer per consumed frame means one reverse SEND per message, which
+	// pins the sender's credit window on a round-trip. Instead, accumulate
+	// consumed credits and return them in bulk once half the window is used, or
+	// just before the receiver blocks for new data.
+	creditPending        int
+	creditFlushThreshold int
+
 	// Lightweight send-path probes (enabled when GORDMA_PROBE is set). They
 	// accumulate nanoseconds spent in the two potential stall points on the
 	// send side: acquiring a flow-control credit (waiting for the peer to
@@ -138,6 +146,10 @@ func newTransport(pd *gordma.PD, qp *gordma.QP, cq *gordma.CQ, slotSize, depth i
 		closed:         make(chan struct{}),
 		peerFin:        make(chan struct{}),
 		probe:          os.Getenv("GORDMA_PROBE") != "",
+	}
+	t.creditFlushThreshold = depth / 2
+	if t.creditFlushThreshold < 1 {
+		t.creditFlushThreshold = 1
 	}
 	for i := 0; i < depth; i++ {
 		t.sendFree <- i
@@ -556,25 +568,74 @@ func (t *transport) sendFin() {
 	_ = t.qp.PostSend(wr)
 }
 
+// consumeFrameLocked reassembles one data frame, reposts its recv slot, and
+// accumulates a flow-control credit (returned to the peer in bulk by
+// releaseCreditLocked). The caller must hold recvMu.
+func (t *transport) consumeFrameLocked(fr recvFrame) (msg []byte, complete bool, err error) {
+	off := fr.slot*t.slotSize + frameHeaderSize
+	payload := t.recvBuf[off : off+fr.n]
+	m, done, aerr := t.reasm.add(payload, fr.hdr.hasMore())
+	// Repost the slot and account the credit before surfacing errors so the
+	// ring keeps flowing.
+	if rerr := t.postRecv(fr.slot); rerr != nil {
+		return nil, false, rerr
+	}
+	t.releaseCreditLocked(1)
+	if aerr != nil {
+		return nil, false, aerr
+	}
+	return m, done, nil
+}
+
+// releaseCreditLocked accumulates n consumed credits, returning them to the
+// peer in one reverse SEND once half the window has built up. The caller must
+// hold recvMu.
+func (t *transport) releaseCreditLocked(n int) {
+	t.creditPending += n
+	if t.creditPending >= t.creditFlushThreshold {
+		t.flushCreditsLocked()
+	}
+}
+
+// flushCreditsLocked returns any accumulated credits to the peer in a single
+// control SEND. It is a no-op when nothing is pending. The caller must hold
+// recvMu.
+func (t *transport) flushCreditsLocked() {
+	if t.creditPending > 0 {
+		n := t.creditPending
+		t.creditPending = 0
+		t.returnCredit(n)
+	}
+}
+
 // nextMessage pulls data frames from recvQ and reassembles them into a complete
-// message. Each consumed frame's recv slot is reposted and one credit is
-// returned to the peer. When the peer has sent FIN and no buffered frames
-// remain, it returns io.EOF.
+// message. Consumed credits are batched (see releaseCreditLocked) and flushed
+// to the peer just before the receiver blocks for new data, so the sender's
+// window is refilled in bulk rather than one credit per frame. When the peer
+// has sent FIN and no buffered frames remain, it returns io.EOF.
 func (t *transport) nextMessage() ([]byte, error) {
 	for {
+		// Drain whatever is already queued without blocking first.
 		select {
 		case fr := <-t.recvQ:
-			off := fr.slot*t.slotSize + frameHeaderSize
-			payload := t.recvBuf[off : off+fr.n]
-			msg, complete, aerr := t.reasm.add(payload, fr.hdr.hasMore())
-			// Repost the slot and return a credit before handling errors so the
-			// ring keeps flowing.
-			if rerr := t.postRecv(fr.slot); rerr != nil {
-				return nil, rerr
+			msg, complete, err := t.consumeFrameLocked(fr)
+			if err != nil {
+				return nil, err
 			}
-			t.returnCredit(1)
-			if aerr != nil {
-				return nil, aerr
+			if complete {
+				return msg, nil
+			}
+			continue
+		default:
+		}
+		// About to block for new data: hand the peer its accumulated credits so
+		// it is not stalled waiting on them.
+		t.flushCreditsLocked()
+		select {
+		case fr := <-t.recvQ:
+			msg, complete, err := t.consumeFrameLocked(fr)
+			if err != nil {
+				return nil, err
 			}
 			if complete {
 				return msg, nil
@@ -584,15 +645,9 @@ func (t *transport) nextMessage() ([]byte, error) {
 			// FIN signal; otherwise report EOF.
 			select {
 			case fr := <-t.recvQ:
-				off := fr.slot*t.slotSize + frameHeaderSize
-				payload := t.recvBuf[off : off+fr.n]
-				msg, complete, aerr := t.reasm.add(payload, fr.hdr.hasMore())
-				if rerr := t.postRecv(fr.slot); rerr != nil {
-					return nil, rerr
-				}
-				t.returnCredit(1)
-				if aerr != nil {
-					return nil, aerr
+				msg, complete, err := t.consumeFrameLocked(fr)
+				if err != nil {
+					return nil, err
 				}
 				if complete {
 					return msg, nil
@@ -675,6 +730,9 @@ func (t *transport) recvBatch(max int) ([][]byte, error) {
 		}
 		out = append(out, msg)
 	}
+	// Return any accumulated credits before handing control back to the caller,
+	// so the peer's window is refilled promptly even between RecvBatch calls.
+	t.flushCreditsLocked()
 	return out, nil
 }
 
@@ -686,15 +744,9 @@ func (t *transport) tryNextMessage() ([]byte, bool, error) {
 	for {
 		select {
 		case fr := <-t.recvQ:
-			off := fr.slot*t.slotSize + frameHeaderSize
-			payload := t.recvBuf[off : off+fr.n]
-			msg, complete, aerr := t.reasm.add(payload, fr.hdr.hasMore())
-			if rerr := t.postRecv(fr.slot); rerr != nil {
-				return nil, false, rerr
-			}
-			t.returnCredit(1)
-			if aerr != nil {
-				return nil, false, aerr
+			msg, complete, err := t.consumeFrameLocked(fr)
+			if err != nil {
+				return nil, false, err
 			}
 			if complete {
 				return msg, true, nil
