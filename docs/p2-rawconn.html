@@ -29,8 +29,11 @@
         把完成事件交回应用 goroutine。这些都是它语义的必需品，但叠加起来限制了吞吐——在 64KB 大包上实测约
         <strong>20+ Gb/s</strong>，远没喂满高速网卡。</p>
       <p><code>RawConn</code> 面向「就是要极限吞吐」的场景：同一个 goroutine 里 post + busy-poll，
-        无封帧、无流控、无 handoff。实测同一张 400G 网卡上，<code>RawConn</code> 的 64KB 大包吞吐能到
-        <strong>230+ Gb/s</strong>，是 <code>Conn</code> 的约 10 倍，量级上追平底层 <code>perftest</code> 工具。</p>
+        无封帧、无流控、无 handoff。实测同一张 400G 网卡上，64KB 大包吞吐能到
+        <strong>210+ Gb/s</strong>，是 <code>Conn</code> 的约 10 倍。对比同机的底层 <code>perftest</code> 工具：
+        Go 版 <code>go_send_bw</code> 约 <strong>310 Gb/s</strong>、C 版 <code>ib_send_bw</code> 约 <strong>390 Gb/s</strong>（打满线速）；
+        <code>RawConn</code> 量级相当但尚未追平——差距主要是每个 WR 一次 cgo 跨界的固定开销，详见
+        <a href="p3-rdmanet-bw.html">go_rdmanet_bw 调优</a>。</p>
 
       <div class="callout note">
         <span class="tag">取舍</span>
@@ -112,7 +115,7 @@ rc.<span class="f">RecvDrain</span>(iters, txDepth, <span class="k">func</span>(
           <tr><td>流控/背压</td><td>内置信用流控</td><td>无，自己控制 in-flight 数</td></tr>
           <tr><td>缓冲区</td><td>库托管（bounce）</td><td>自己注册 MR</td></tr>
           <tr><td>大消息分片</td><td>透明</td><td>自己处理</td></tr>
-          <tr><td>吞吐（64KB）</td><td>~20+ Gb/s</td><td>~230+ Gb/s</td></tr>
+          <tr><td>吞吐（64KB）</td><td>~20+ Gb/s</td><td>~210+ Gb/s</td></tr>
           <tr><td>定位</td><td>写业务、要 net 风格</td><td>压测 / 极限吞吐数据面</td></tr>
         </tbody>
       </table>

@@ -29,10 +29,19 @@
         <tbody>
           <tr><td>逐条发送</td><td>默认</td><td><code>Conn.SendMsg</code></td><td>~18 Gb/s</td></tr>
           <tr><td>批量消息</td><td><code>-b N</code></td><td><code>Conn.SendBatch</code></td><td>~28 Gb/s</td></tr>
-          <tr><td>RawConn</td><td><code>--raw</code></td><td><code>RawConn.PipelineBatch</code></td><td>~230 Gb/s</td></tr>
+          <tr><td>RawConn</td><td><code>--raw</code></td><td><code>RawConn.PipelineBatch</code></td><td>~210 Gb/s</td></tr>
         </tbody>
       </table>
       <p>（吞吐为某台 400G RoCE v2 主机上的实测量级，仅供横向对比，会随硬件/配置变化。）</p>
+
+      <div class="callout note">
+        <span class="tag">先对齐单位</span>
+        横向比较前务必把单位换算到同一口径，否则会差出 8 倍。本工具与 <code>--raw</code> 输出
+        <strong>Gb/s</strong>（10⁹ bit/s）；Go 版 <code>go_send_bw</code> 输出 <strong>MB/s</strong>（10⁶ byte/s，
+        ×8÷1000 得 Gb/s）；C 版 <code>ib_send_bw</code> 输出 <strong>MiB/s</strong>（2²⁰ byte/s，×2²⁰×8÷10⁹ 得 Gb/s）。
+        同机 64KB 实测换算后约为：<code>ib_send_bw</code> ~390 Gb/s（打满线速）、
+        <code>go_send_bw</code> ~310 Gb/s、<code>RawConn</code> ~210 Gb/s。
+      </div>
 
       <h2>模式一：默认逐条 SendMsg</h2>
       <p>不带任何开关时，客户端逐条 <code>SendMsg</code>。这是<strong>延迟受限</strong>的——同一时刻只有一条消息 in-flight，
@@ -51,7 +60,9 @@
 
       <h2>模式三：--raw 极限吞吐</h2>
       <p>加 <code>--raw</code> 切到 <a href="p2-rawconn.html">RawConn</a>：无封帧、无流控、单 goroutine post+busy-poll，
-        量级上追平底层 <code>perftest</code>。此模式下 <code>-b</code> 的含义变为 <strong>tx-depth</strong>（in-flight WR 数）。</p>
+        吞吐量级接近底层 <code>perftest</code>（约为 Go 版 <code>go_send_bw</code> 的 0.7 倍、C 版 <code>ib_send_bw</code> 的 0.55 倍——
+        差距主要来自每个 WR 一次 Go→C 的 cgo 跨界，用 <code>GORDMA_PROBE=1</code> 可量化）。
+        此模式下 <code>-b</code> 的含义变为 <strong>tx-depth</strong>（in-flight WR 数）。</p>
       <pre><code>./bin/go_rdmanet_bw --raw -d mlx5_1 -x 3 -b 128             <span class="c"># 服务端</span>
 ./bin/go_rdmanet_bw --raw -s 65536 -n 1000000 -d mlx5_1 -x 3 -b 128 33.0.226.25:18515</code></pre>
       <p>输出形如 <code>raw-batch Send(txDepth=128): sent ... Gb/s, ... Mpps</code>。
@@ -62,6 +73,20 @@
         <code>--raw -s 1024 -n 5000000 -b 128</code> 的 Mpps 会比大包高一个数量级。
       </div>
 
+      <h2>对齐 perftest：诊断开关</h2>
+      <p>想搞清「RawConn 为什么比 <code>go_send_bw</code> 慢」，把 RawConn 的跑法逐项对齐到 perftest 基线，再看差距落在哪：</p>
+      <table>
+        <thead><tr><th>开关</th><th>作用</th></tr></thead>
+        <tbody>
+          <tr><td><code>--raw-onebuf</code></td><td>收发两端都复用单块固定区域（而非轮转 tx-depth 个槽位），对齐 perftest 的热工作集。<strong>两端都要加。</strong></td></tr>
+          <tr><td><code>--raw-single</code></td><td>客户端逐条 <code>PostSend</code>（<code>Pipeline</code>）而非批量提交（<code>PipelineBatch</code>），对齐 <code>go_send_bw</code>。</td></tr>
+          <tr><td><code>GORDMA_PROBE=1</code></td><td>环境变量，打开后客户端额外打印 <code>post</code>（提交 WR 耗时占比）vs <code>poll</code>（忙等完成耗时占比）。poll 占比高=瓶颈在网卡/对端；post 占比高=瓶颈在提交路径（cgo）。</td></tr>
+        </tbody>
+      </table>
+      <pre><code><span class="c"># 完全对齐 go_send_bw，并打开探针看时间花在哪</span>
+GORDMA_PROBE=1 ./bin/go_rdmanet_bw --raw --raw-onebuf -d mlx5_1 -x 3 -b 128                              <span class="c"># 服务端</span>
+GORDMA_PROBE=1 ./bin/go_rdmanet_bw --raw --raw-onebuf --raw-single -s 65536 -n 1000000 -d mlx5_1 -x 3 -b 128 33.0.226.25:18515</code></pre>
+
       <h2>其它实用开关</h2>
       <table>
         <thead><tr><th>开关</th><th>作用</th></tr></thead>
@@ -69,7 +94,6 @@
           <tr><td><code>--depth N</code></td><td>队列深度 / 信用窗口（两端一致才有对照意义；<code>0</code>=库默认 128）</td></tr>
           <tr><td><code>--poll busy|event</code></td><td>非 raw 模式的 CQ 排空方式：忙轮询低延迟、事件驱动省 CPU</td></tr>
           <tr><td><code>--handshake</code></td><td>非 raw 模式改用 TCP 握手而非 rdma_cm</td></tr>
-          <tr><td><code>--raw-onebuf</code></td><td>raw 诊断用：每次发同一块固定区域而非轮转槽位</td></tr>
         </tbody>
       </table>
 
