@@ -18,7 +18,7 @@
   </aside>
   <main class="content">
     <div class="content-inner">
-      <span class="kicker">第二部分 · 3 / 8</span>
+      <span class="kicker">第二部分 · 3 / 10</span>
       <h1>底层 verbs 封装</h1>
       <p class="lede">第一部分那张对象表，在代码里就是这些 Go 类型和方法。引用包注释 <code>doc.go</code>：
         <em>「The library mirrors the object model of rdma-core: Device, Context, PD, MR, CQ, QP, AH and CompChannel.」</em></p>
@@ -102,8 +102,8 @@ wr := gordma.SendWR{
 
       <div class="callout tip">
         <span class="tag">下一步</span>
-        以上每一步在高层 <code>rdmanet</code> 里都被隐藏了。下一节看
-        <a href="p2-rdmanet.html">高层 rdmanet</a> 是怎么把它们收成 <code>SendMsg</code>/<code>RecvMsg</code> 的。
+        光看 API 还不够。下一节 <a href="p2-lowlevel-recipe.html">底层实战：手写一个 RC 收发</a>
+        把上面这些拼成一个能跑的完整程序，照着抄就能上手。
       </div>
 
       <div id="page-nav" class="page-nav"></div>

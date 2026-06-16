@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>gordma · 底层实战：手写 RC 收发</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-page="p2-lowlevel-recipe">
+<div class="layout">
+  <aside class="sidebar">
+    <a class="brand" href="index.html" style="text-decoration:none">
+      <div class="logo">G</div>
+      <div class="name">gordma</div>
+    </a>
+    <div class="brand-sub">Go 语言 RDMA 网络库 · 教程</div>
+    <nav id="sidebar-nav" class="nav"></nav>
+  </aside>
+  <main class="content">
+    <div class="content-inner">
+      <span class="kicker">第二部分 · 4 / 10</span>
+      <h1>底层实战：手写一个 RC 收发</h1>
+      <p class="lede">上一节把底层 API 一个个过了一遍，但单看方法签名很难知道「该怎么把它们串起来」。
+        这一节把<a href="p1-flow.html">第一部分那七步流程</a>落成一个能跑的完整程序——
+        客户端发一条消息、服务端收下并回显。读完你就有了一个可以照着改的骨架。</p>
+
+      <div class="callout note">
+        <span class="tag">用哪条建连路</span>
+        底层收发的前提是 QP 已到 RTS。最省事的是用 <code>gordma.Dial</code>/<code>Listen</code>（rdma_cm），
+        它返回的 <code>CMConn</code> 里 QP 已经在 RTS，省掉手写 INIT→RTR→RTS 和带外握手。
+        本节就走这条路；想完全手动握手见 <a href="p2-connect.html">两种连接方式</a>。
+      </div>
+
+      <h2>服务端：收一条并回显</h2>
+      <p>七步里的「建资源 → 投递 recv → 轮询完成 → 再发回去」，逐行对应：</p>
+      <pre><code><span class="k">func</span> <span class="f">server</span>(addr <span class="k">string</span>) <span class="k">error</span> {
+    ln, err := gordma.<span class="f">Listen</span>(addr)          <span class="c">// rdma_cm 监听</span>
+    <span class="k">if</span> err != <span class="k">nil</span> { <span class="k">return</span> err }
+    <span class="k">defer</span> ln.<span class="f">Close</span>()
+
+    cm, err := ln.<span class="f">Accept</span>()                 <span class="c">// CMConn，QP 已在 RTS</span>
+    <span class="k">if</span> err != <span class="k">nil</span> { <span class="k">return</span> err }
+    <span class="k">defer</span> cm.<span class="f">Close</span>()
+    qp, cq, pd := cm.<span class="f">QP</span>(), cm.<span class="f">CQ</span>(), cm.<span class="f">PD</span>()
+
+    <span class="c">// 注册一块可本地写的接收缓冲（网卡只能 DMA 已注册内存）</span>
+    mr, err := pd.<span class="f">RegMRBuffer</span>(<span class="s">4096</span>, gordma.AccessLocalWrite)
+    <span class="k">if</span> err != <span class="k">nil</span> { <span class="k">return</span> err }
+    <span class="k">defer</span> mr.<span class="f">Close</span>()
+
+    <span class="c">// 收之前必须先挂一个 recv WR，否则对端发来会 RNR</span>
+    sge := gordma.<span class="f">SGEFromMR</span>(mr, <span class="s">0</span>, <span class="s">4096</span>)
+    <span class="k">if</span> err := qp.<span class="f">PostRecv</span>(gordma.RecvWR{WRID: <span class="s">1</span>, SGList: []gordma.SGE{sge}}); err != <span class="k">nil</span> {
+        <span class="k">return</span> err
+    }
+
+    <span class="c">// 忙轮询 CQ 直到收到完成</span>
+    wc := <span class="f">make</span>([]gordma.WorkCompletion, <span class="s">1</span>)
+    n := <span class="f">pollOne</span>(cq, wc)                    <span class="c">// 见下方助手</span>
+    <span class="k">if</span> !wc[<span class="s">0</span>].Status.<span class="f">OK</span>() {
+        <span class="k">return</span> fmt.<span class="f">Errorf</span>(<span class="s">"recv failed: %v"</span>, wc[<span class="s">0</span>].Status)
+    }
+    msg := mr.<span class="f">Bytes</span>()[:wc[<span class="s">0</span>].ByteLen]    <span class="c">// 实际收到的字节</span>
+    fmt.<span class="f">Printf</span>(<span class="s">"got %q\n"</span>, msg)
+
+    <span class="c">// 原样发回（同一块 MR 当发送源）</span>
+    <span class="f">copy</span>(mr.<span class="f">Bytes</span>(), msg)
+    sndErr := qp.<span class="f">PostSend</span>(gordma.SendWR{
+        WRID: <span class="s">2</span>, Opcode: gordma.OpSend,
+        SGList: []gordma.SGE{gordma.<span class="f">SGEFromMR</span>(mr, <span class="s">0</span>, <span class="f">len</span>(msg))},
+        Signaled: <span class="k">true</span>,
+    })
+    <span class="k">if</span> sndErr != <span class="k">nil</span> { <span class="k">return</span> sndErr }
+    <span class="f">pollOne</span>(cq, wc)                         <span class="c">// 等发送完成</span>
+    <span class="k">return</span> <span class="k">nil</span>
+}</code></pre>
+
+      <h2>客户端：发一条并等回显</h2>
+      <pre><code><span class="k">func</span> <span class="f">client</span>(addr <span class="k">string</span>) <span class="k">error</span> {
+    cm, err := gordma.<span class="f">Dial</span>(addr, <span class="s">0</span>)        <span class="c">// 0 = 默认超时；QP 已在 RTS</span>
+    <span class="k">if</span> err != <span class="k">nil</span> { <span class="k">return</span> err }
+    <span class="k">defer</span> cm.<span class="f">Close</span>()
+    qp, cq, pd := cm.<span class="f">QP</span>(), cm.<span class="f">CQ</span>(), cm.<span class="f">PD</span>()
+
+    mr, _ := pd.<span class="f">RegMRBuffer</span>(<span class="s">4096</span>, gordma.AccessLocalWrite)
+    <span class="k">defer</span> mr.<span class="f">Close</span>()
+    wc := <span class="f">make</span>([]gordma.WorkCompletion, <span class="s">1</span>)
+
+    <span class="c">// 先挂 recv 接回显，再发——顺序很重要</span>
+    qp.<span class="f">PostRecv</span>(gordma.RecvWR{WRID: <span class="s">1</span>, SGList: []gordma.SGE{gordma.<span class="f">SGEFromMR</span>(mr, <span class="s">0</span>, <span class="s">4096</span>)}})
+
+    <span class="f">copy</span>(mr.<span class="f">Bytes</span>(), []<span class="k">byte</span>(<span class="s">"hello rdma"</span>))
+    qp.<span class="f">PostSend</span>(gordma.SendWR{
+        WRID: <span class="s">2</span>, Opcode: gordma.OpSend,
+        SGList: []gordma.SGE{gordma.<span class="f">SGEFromMR</span>(mr, <span class="s">0</span>, <span class="s">10</span>)},
+        Signaled: <span class="k">true</span>,
+    })
+    <span class="f">pollOne</span>(cq, wc)                         <span class="c">// 发送完成</span>
+    <span class="f">pollOne</span>(cq, wc)                         <span class="c">// 回显到达</span>
+    fmt.<span class="f">Printf</span>(<span class="s">"echo: %q\n"</span>, mr.<span class="f">Bytes</span>()[:wc[<span class="s">0</span>].ByteLen])
+    <span class="k">return</span> <span class="k">nil</span>
+}</code></pre>
+
+      <h2>那个 pollOne 助手</h2>
+      <p>底层没有「阻塞收一条」的封装，你得自己轮询 CQ 到拿出一个完成。最简单的忙轮询版本：</p>
+      <pre><code><span class="c">// 忙轮询 CQ 直到取到一个完成，返回数量</span>
+<span class="k">func</span> <span class="f">pollOne</span>(cq *gordma.CQ, wc []gordma.WorkCompletion) <span class="k">int</span> {
+    <span class="k">for</span> {
+        n, err := cq.<span class="f">Poll</span>(wc)
+        <span class="k">if</span> err != <span class="k">nil</span> || n &gt; <span class="s">0</span> {
+            <span class="k">return</span> n
+        }
+    }
+}</code></pre>
+      <div class="callout note">
+        <span class="tag">这正是 perftest 的做法</span>
+        想看带流水线、批量收割的「生产级」底层循环，读 <code>perftest/send.go</code> 的 <code>runBWPipeline</code>——
+        它在此基础上保持多个 WR <a href="glossary.html#g-perf">in-flight</a> 来打满带宽（参见 <a href="p3-cmd.html">cmd 性能工具</a>）。
+      </div>
+
+      <h2>常见坑（底层手写最容易踩）</h2>
+      <table>
+        <thead><tr><th>症状</th><th>原因 / 解法</th></tr></thead>
+        <tbody>
+          <tr><td>对端发来就 RNR、重试耗尽</td><td>接收方<strong>没先 PostRecv</strong>。规则：先挂 recv，再让对端发。</td></tr>
+          <tr><td><code>ibv_post_recv: cannot allocate memory</code></td><td>挂的 recv 数超过 QP 的 <code>MaxRecvWR</code>。别超过建 QP 时设的深度。</td></tr>
+          <tr><td>完成状态非 OK（如 LocalProtErr）</td><td>SGE 指向了<strong>没注册</strong>或权限不对的内存。确认用 <code>SGEFromMR</code> 且 access flag 够用。</td></tr>
+          <tr><td>发了但对端收不到</td><td>两端 <code>-d</code>/<code>-x</code>（设备/GID 索引）没对齐同一张物理网络，或 GID 索引选错（见 <a href="p1-roce.html">RoCE 与 GID</a>）。</td></tr>
+          <tr><td>程序卡死在 poll</td><td>等了一个不会来的完成：unsignaled 的 send 不产生 CQE；或对端根本没发。</td></tr>
+        </tbody>
+      </table>
+
+      <h2>想做单边 Write / Read？</h2>
+      <p>底层是唯一能做单边操作的层。拿到对端的 <code>rkey</code> 和远端地址（带外交换，rdma_cm 不替你换，得用
+        <a href="p2-connect.html">TCP 握手</a>或自己传），在 <code>SendWR</code> 里换 Opcode + 填 <code>RemoteAddr</code>/<code>RKey</code>：</p>
+      <pre><code>qp.<span class="f">PostSend</span>(gordma.SendWR{
+    WRID: <span class="s">1</span>, Opcode: gordma.OpWrite,    <span class="c">// 或 OpRead</span>
+    SGList:     []gordma.SGE{gordma.<span class="f">SGEFromMR</span>(mr, <span class="s">0</span>, n)},
+    RemoteAddr: peerAddr,                <span class="c">// 对端 MR 的 Addr()</span>
+    RKey:       peerRKey,                <span class="c">// 对端 MR 的 RKey()</span>
+    Signaled:   <span class="k">true</span>,
+})  <span class="c">// 对端 CPU 不参与，无需对端 PostRecv</span></code></pre>
+      <p>完整的单边可运行例子见 <a href="p3-cmd.html"><code>cmd/go_write_bw</code> / <code>go_read_bw</code></a> 和它们背后的
+        <code>perftest/write.go</code>、<code>read.go</code>。</p>
+
+      <div class="callout tip">
+        <span class="tag">下一步</span>
+        手写底层能完全掌控，但样板多。下一节回到 <a href="p2-rdmanet.html">高层 rdmanet</a>，
+        看同样这件事用 <code>SendMsg</code>/<code>RecvMsg</code> 几行就完事。
+      </div>
+
+      <div id="page-nav" class="page-nav"></div>
+      <div class="foot">gordma 教程</div>
+    </div>
+  </main>
+</div>
+<script src="nav.js"></script>
+</body>
+</html>

@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>gordma · 高层实战：动手写业务</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-page="p2-rdmanet-recipe">
+<div class="layout">
+  <aside class="sidebar">
+    <a class="brand" href="index.html" style="text-decoration:none">
+      <div class="logo">G</div>
+      <div class="name">gordma</div>
+    </a>
+    <div class="brand-sub">Go 语言 RDMA 网络库 · 教程</div>
+    <nav id="sidebar-nav" class="nav"></nav>
+  </aside>
+  <main class="content">
+    <div class="content-inner">
+      <span class="kicker">第二部分 · 6 / 10</span>
+      <h1>高层实战：动手写业务</h1>
+      <p class="lede">上一节列了 <code>rdmanet</code> 的方法。这一节回答最实际的问题：
+        <strong>「我现在要写自己的程序，第一步该敲什么？」</strong>
+        我们从零搭一个请求/响应（RPC）服务，再给一张「想做 X 用哪个方法」的速查表。</p>
+
+      <h2>第 0 步：起手式</h2>
+      <p>每个 RDMA 程序都从「判断当前环境是否支持」开始——这样代码在 macOS 上也能编译运行（只是优雅退出），见
+        <a href="p2-stub.html">跨平台 stub</a>。固定模板：</p>
+      <pre><code><span class="k">import</span> (
+    <span class="s">"github.com/smallnest/gordma"</span>
+    <span class="s">"github.com/smallnest/gordma/rdmanet"</span>
+)
+
+<span class="k">if</span> !gordma.<span class="f">Supported</span>() {
+    log.<span class="f">Fatal</span>(<span class="s">"RDMA not supported here"</span>)   <span class="c">// 非 Linux / 无硬件</span>
+}
+opts := []rdmanet.Option{
+    rdmanet.<span class="f">WithDevice</span>(<span class="s">"mlx5_1"</span>),       <span class="c">// 选网卡</span>
+    rdmanet.<span class="f">WithGIDIndex</span>(<span class="s">3</span>),             <span class="c">// RoCE v2 常用 3</span>
+}</code></pre>
+
+      <h2>第 1 步：服务端循环</h2>
+      <p>和标准库 <code>net</code> 几乎一样：<code>Listen</code> → <code>Accept</code> → 处理 → 关闭。RPC 服务端是一个
+        「收请求 → 处理 → 回响应」的循环，客户端断开时 <code>RecvMsg</code> 返回 <code>io.EOF</code>：</p>
+      <pre><code><span class="k">func</span> <span class="f">serve</span>(addr <span class="k">string</span>, opts []rdmanet.Option) <span class="k">error</span> {
+    ln, err := rdmanet.<span class="f">Listen</span>(addr, opts...)
+    <span class="k">if</span> err != <span class="k">nil</span> { <span class="k">return</span> err }
+    <span class="k">defer</span> ln.<span class="f">Close</span>()
+
+    <span class="k">for</span> {
+        conn, err := ln.<span class="f">Accept</span>()
+        <span class="k">if</span> err != <span class="k">nil</span> { <span class="k">return</span> err }
+        <span class="k">go</span> <span class="f">handle</span>(conn)             <span class="c">// 每个连接一个 goroutine</span>
+    }
+}
+
+<span class="k">func</span> <span class="f">handle</span>(conn *rdmanet.Conn) {
+    <span class="k">defer</span> conn.<span class="f">Close</span>()
+    <span class="k">for</span> {
+        req, err := conn.<span class="f">RecvMsg</span>()      <span class="c">// 一条完整请求</span>
+        <span class="k">if</span> err == io.EOF { <span class="k">return</span> }   <span class="c">// 客户端关闭，正常结束</span>
+        <span class="k">if</span> err != <span class="k">nil</span> { log.<span class="f">Print</span>(err); <span class="k">return</span> }
+
+        resp := <span class="f">process</span>(req)            <span class="c">// 你的业务逻辑</span>
+        <span class="k">if</span> err := conn.<span class="f">SendMsg</span>(resp); err != <span class="k">nil</span> {
+            log.<span class="f">Print</span>(err); <span class="k">return</span>
+        }
+    }
+}</code></pre>
+
+      <h2>第 2 步：客户端</h2>
+      <pre><code><span class="k">func</span> <span class="f">call</span>(addr <span class="k">string</span>, req []<span class="k">byte</span>, opts []rdmanet.Option) ([]<span class="k">byte</span>, <span class="k">error</span>) {
+    conn, err := rdmanet.<span class="f">Dial</span>(addr, opts...)
+    <span class="k">if</span> err != <span class="k">nil</span> { <span class="k">return</span> <span class="k">nil</span>, err }
+    <span class="k">defer</span> conn.<span class="f">Close</span>()
+
+    <span class="k">if</span> err := conn.<span class="f">SendMsg</span>(req); err != <span class="k">nil</span> {
+        <span class="k">return</span> <span class="k">nil</span>, err
+    }
+    <span class="k">return</span> conn.<span class="f">RecvMsg</span>()             <span class="c">// 阻塞等响应</span>
+}</code></pre>
+      <p>就这些——没有 MR、没有 WR、没有 CQ 轮询、没有状态机。<code>rdmanet</code> 把
+        <a href="p2-lowlevel-recipe.html">上一节那一大坨底层代码</a>全收进了这四个方法里。
+        这个骨架就是 <a href="p3-scenario.html">examples/rpc</a> 的核心。</p>
+
+      <h2>速查：想做 X，用哪个？</h2>
+      <table>
+        <thead><tr><th>我想……</th><th>用</th><th>参考示例</th></tr></thead>
+        <tbody>
+          <tr><td>收发有边界的「消息」</td><td><code>SendMsg</code> / <code>RecvMsg</code></td><td>echo-msg, rpc</td></tr>
+          <tr><td>把连接当字节流（配 <code>io.Copy</code>）</td><td><code>Read</code> / <code>Write</code></td><td>echo-stream, file-transfer</td></tr>
+          <tr><td>一次发/收多条，提消息率</td><td><code>SendBatch</code> / <code>RecvBatch</code></td><td>batch, bench-throughput</td></tr>
+          <tr><td>从预注册内存零拷贝发</td><td><code>AllocBuffer</code> + <code>SendBuffer</code></td><td>zerocopy</td></tr>
+          <tr><td>发大消息（自动分片重组）</td><td><code>SendMsg</code>（透明处理）</td><td>large-message</td></tr>
+          <tr><td>无连接数据报 / 一对多</td><td><code>PacketConn</code> + <code>WriteTo</code>/<code>ReadFrom</code></td><td>packet, ud-broadcast</td></tr>
+          <tr><td>带外发现 UD 对端</td><td><code>NewRegistry</code> + <code>LookupAddr</code></td><td>registry</td></tr>
+          <tr><td>全双工并发收发</td><td>一读 goroutine + 一写 goroutine</td><td>chat</td></tr>
+          <tr><td>服务多个客户端</td><td><code>Accept</code> 循环 + 每连接一 goroutine</td><td>multi-client</td></tr>
+          <tr><td>不用 rdma_cm，走 TCP 握手</td><td><code>WithHandshake()</code></td><td>handshake-dial, connection-styles</td></tr>
+          <tr><td>榨干网卡的极限吞吐</td><td><a href="p2-rawconn.html"><code>RawConn</code></a></td><td>（见下一节）</td></tr>
+          <tr><td>单边 RDMA Write/Read</td><td>下沉到底层 <code>gordma</code> 或 <code>RawConn</code></td><td>cmd/go_write_bw</td></tr>
+        </tbody>
+      </table>
+
+      <h2>几条务必记住的契约</h2>
+      <ul>
+        <li><strong>消息边界保留</strong>：一次 <code>SendMsg</code> = 一次 <code>RecvMsg</code>，无论多大。别假设它像 TCP 那样可以任意切分。</li>
+        <li><strong>别混用 <code>Read</code> 和 <code>RecvMsg</code></strong>：一个 <code>Conn</code> 只选一种接收风格（字节流适配器会缓存半条消息）。</li>
+        <li><strong>并发契约</strong>：一个 <code>Conn</code> 上「一个并发读 + 一个并发写」安全；不要多个 goroutine 同时 <code>SendMsg</code>。</li>
+        <li><strong><code>Close</code> 唤醒阻塞的 <code>RecvMsg</code></strong>（返回 <code>io.EOF</code>），用它做优雅退出。</li>
+        <li><strong>两端设备要对齐</strong>：<code>WithDevice</code>/<code>WithGIDIndex</code> 两端必须指向同一张物理网络、同一 RoCE 版本（见 <a href="p1-roce.html">RoCE 与 GID</a>）。</li>
+      </ul>
+
+      <h2>下一步怎么调优</h2>
+      <p>骨架跑通后，性能不够再按需加 <code>Option</code>——不用一开始就堆：</p>
+      <ul>
+        <li>吞吐不够？→ 试 <code>SendBatch</code> / 调 <code>WithQueueDepth</code>（见 <a href="p2-perf.html">性能选项</a>）。</li>
+        <li>延迟敏感？→ <code>WithPollMode(rdmanet.PollBusy)</code>。</li>
+        <li>大消息频繁？→ 调大 <code>WithBufferSize</code> 减少分片。</li>
+        <li>还要更快、能接受自己管内存？→ 上 <a href="p2-rawconn.html">RawConn</a>。</li>
+      </ul>
+
+      <div class="callout tip">
+        <span class="tag">下一步</span>
+        <code>Conn</code> 够写绝大多数业务了。确实要逼近网卡线速时，看下一节
+        <a href="p2-rawconn.html">RawConn 高速读写</a>。
+      </div>
+
+      <div id="page-nav" class="page-nav"></div>
+      <div class="foot">gordma 教程</div>
+    </div>
+  </main>
+</div>
+<script src="nav.js"></script>
+</body>
+</html>

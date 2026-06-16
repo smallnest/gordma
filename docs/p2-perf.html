@@ -18,7 +18,7 @@
   </aside>
   <main class="content">
     <div class="content-inner">
-      <span class="kicker">第二部分 · 7 / 8</span>
+      <span class="kicker">第二部分 · 9 / 10</span>
       <h1>性能选项</h1>
       <p class="lede"><code>rdmanet</code> 用<strong>函数选项模式</strong>调优，把 <code>Option</code> 传给
         <code>Dial</code> / <code>Listen</code> / <code>ListenPacket</code>。这一节过一遍每个选项的含义、默认值和何时该动它。</p>
@@ -30,7 +30,7 @@
           <tr><td><code>WithDevice("mlx5_3")</code></td><td>按名字选网卡（CPU 网 vs GPU 网）</td><td>第一块可用</td></tr>
           <tr><td><code>WithPort(n)</code></td><td>HCA 端口号（1 起）</td><td><code>1</code></td></tr>
           <tr><td><code>WithGIDIndex(n)</code></td><td>GID 表索引（RoCE v2）</td><td><code>0</code>（示例常用 3）</td></tr>
-          <tr><td><code>WithQueueDepth(n)</code></td><td>队列深度（同时在飞的 WR 数）</td><td><code>128</code></td></tr>
+          <tr><td><code>WithQueueDepth(n)</code></td><td>队列深度（同时 in-flight 的 WR 数）</td><td><code>128</code></td></tr>
           <tr><td><code>WithBufferSize(n)</code></td><td>每个 bounce buffer 槽大小（字节）</td><td><code>64 KiB</code></td></tr>
           <tr><td><code>WithHandshake()</code></td><td>改用 TCP 带外握手</td><td>关（用 rdma_cm）</td></tr>
           <tr><td><code>WithPollMode(...)</code></td><td>CQ 排空方式</td><td><code>PollEvent</code></td></tr>
@@ -60,7 +60,7 @@
 
       <h2>队列深度与缓冲区大小</h2>
       <ul>
-        <li><strong><code>WithQueueDepth</code></strong>：允许同时在飞的工作请求数。调大能提升流水线深度、利好高带宽，但占用更多资源。</li>
+        <li><strong><code>WithQueueDepth</code></strong>：允许同时 in-flight 的工作请求数。调大能提升流水线深度、利好高带宽，但占用更多资源。</li>
         <li><strong><code>WithBufferSize</code></strong>：每个注册槽的大小。消息普遍偏大时调大可减少分片；偏小时调小省内存。</li>
       </ul>
 

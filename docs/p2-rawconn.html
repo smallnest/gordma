@@ -18,7 +18,7 @@
   </aside>
   <main class="content">
     <div class="content-inner">
-      <span class="kicker">第二部分 · 5 / 8</span>
+      <span class="kicker">第二部分 · 7 / 10</span>
       <h1>RawConn 高速读写</h1>
       <p class="lede"><code>Conn</code> 的 net 风格很好用，但为「保留消息边界 + 流控 + 易用」付出的固定开销，
         让它的吞吐封顶在远低于网卡线速的水平。<code>RawConn</code> 把这些都剥掉，直接暴露
@@ -35,7 +35,7 @@
       <div class="callout note">
         <span class="tag">取舍</span>
         <code>RawConn</code> 把易用性换成了速度，所以它<strong>不</strong>替你做这些：不保留消息边界（一次 Send 就是一个工作请求）、
-        不做流控（你得自己保证在飞的 Send 不超过对端已投递的 Recv，否则 RNR）、不托管缓冲区（自己注册 MR、构造 SGE）。
+        不做流控（你得自己保证 in-flight 的 Send 不超过对端已投递的 Recv，否则 RNR）、不托管缓冲区（自己注册 MR、构造 SGE）。
       </div>
 
       <h2>三种角色的 API</h2>
@@ -52,7 +52,7 @@
       </table>
 
       <h2>发送方：内置流水线</h2>
-      <p>最省事的用法是 <code>PipelineBatch</code>：保持 <code>txDepth</code> 个 signaled WR 在飞，每个完成就补一个，
+      <p>最省事的用法是 <code>PipelineBatch</code>：保持 <code>txDepth</code> 个 signaled WR in-flight，每个完成就补一个，
         直到发满 <code>iters</code> 条。这正是 <code>perftest</code> 打满线速的那套循环：</p>
       <pre><code>rc, _ := rdmanet.<span class="f">DialRaw</span>(addr,
     rdmanet.<span class="f">WithDevice</span>(<span class="s">"mlx5_1"</span>),
@@ -109,7 +109,7 @@ rc.<span class="f">RecvDrain</span>(iters, txDepth, <span class="k">func</span>(
         <thead><tr><th></th><th><code>Conn</code></th><th><code>RawConn</code></th></tr></thead>
         <tbody>
           <tr><td>消息边界</td><td>保留（<code>SendMsg</code>=<code>RecvMsg</code>）</td><td>不保留（你自己分帧）</td></tr>
-          <tr><td>流控/背压</td><td>内置信用流控</td><td>无，自己控制在飞数</td></tr>
+          <tr><td>流控/背压</td><td>内置信用流控</td><td>无，自己控制 in-flight 数</td></tr>
           <tr><td>缓冲区</td><td>库托管（bounce）</td><td>自己注册 MR</td></tr>
           <tr><td>大消息分片</td><td>透明</td><td>自己处理</td></tr>
           <tr><td>吞吐（64KB）</td><td>~20+ Gb/s</td><td>~230+ Gb/s</td></tr>
