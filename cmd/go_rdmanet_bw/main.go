@@ -72,7 +72,16 @@ func run(args []string) error {
 		if fs.NArg() > 0 {
 			return runClientRaw(fs.Arg(0), *size, *iters, txDepth, *rawOne, *rawSingle, opts)
 		}
-		return runServerRaw(fmt.Sprintf("0.0.0.0:%d", *tcpPort), *size, txDepth, *rawOne, *loop, opts)
+		// On the server, draining an exact count (when -n is given) returns as
+		// soon as the run completes — required for --loop, since waiting for the
+		// client's close to trigger an RNR/teardown takes seconds and would make
+		// the next client's handshake time out. Without -n, fall back to
+		// draining until the client closes (drainCount 0).
+		drainCount := 0
+		if fs.Changed("count") {
+			drainCount = *iters
+		}
+		return runServerRaw(fmt.Sprintf("0.0.0.0:%d", *tcpPort), *size, txDepth, drainCount, *rawOne, *loop, opts)
 	}
 	opts, err := buildOptions(*device, *port, *gidIndex, *size, *depth, *handshk, *pollMode)
 	if err != nil {
@@ -290,13 +299,17 @@ func gidDecimal(gid [16]byte) string {
 }
 
 // runServerRaw is the RawConn passive side: accept, register one MR, and drain
-// recvs until the client closes (an RNR/transport error ends the run). When
-// oneBuf is set the recv side reuses a single fixed 64KB region every iteration
-// (like perftest's go_send_bw server) instead of cycling through txDepth slots;
-// this keeps the receive-side working set hot to match the perftest baseline.
-// When loop is set it keeps accepting connections (one run per client) so the
-// client can be re-run without restarting the server.
-func runServerRaw(addr string, size, txDepth int, oneBuf, loop bool, opts []rdmanet.Option) error {
+// recvs. When oneBuf is set the recv side reuses a single fixed 64KB region
+// every iteration (like perftest's go_send_bw server) instead of cycling
+// through txDepth slots; this keeps the receive-side working set hot to match
+// the perftest baseline. When loop is set it keeps accepting connections (one
+// run per client) so the client can be re-run without restarting the server.
+//
+// drainCount controls how the per-connection drain ends: a positive value
+// reaps exactly that many recvs and returns (the client's -n; this is what
+// makes --loop responsive, since it does not wait for the client's close to
+// trigger an RNR/teardown). Zero drains until the client closes.
+func runServerRaw(addr string, size, txDepth, drainCount int, oneBuf, loop bool, opts []rdmanet.Option) error {
 	ln, err := rdmanet.ListenRaw(addr, opts...)
 	if err != nil {
 		return err
@@ -304,7 +317,7 @@ func runServerRaw(addr string, size, txDepth int, oneBuf, loop bool, opts []rdma
 	defer func() { _ = ln.Close() }()
 	fmt.Printf("go_rdmanet_bw (raw) server listening on %s\n", ln.Addr())
 	for {
-		if err := serveOneRaw(ln, size, txDepth, oneBuf); err != nil {
+		if err := serveOneRaw(ln, size, txDepth, drainCount, oneBuf); err != nil {
 			return err
 		}
 		if !loop {
@@ -314,9 +327,10 @@ func runServerRaw(addr string, size, txDepth int, oneBuf, loop bool, opts []rdma
 	}
 }
 
-// serveOneRaw accepts a single RawConn, registers an MR, and drains recvs until
-// the client closes.
-func serveOneRaw(ln *rdmanet.RawListener, size, txDepth int, oneBuf bool) error {
+// serveOneRaw accepts a single RawConn, registers an MR, and drains recvs. It
+// reaps drainCount recvs when positive, otherwise drains until the client
+// closes.
+func serveOneRaw(ln *rdmanet.RawListener, size, txDepth, drainCount int, oneBuf bool) error {
 	rc, err := ln.Accept()
 	if err != nil {
 		return err
@@ -345,9 +359,14 @@ func serveOneRaw(ln *rdmanet.RawListener, size, txDepth int, oneBuf bool) error 
 			SGList: []gordma.SGE{gordma.SGEFromMR(mr, off, size)},
 		}
 	}
-	// The client controls the count and closes when done; treat transport
-	// teardown as the end of the run.
-	if err := rc.RecvDrain(1<<62, txDepth, rebuild); err != nil {
+	// With an exact count, reap that many recvs and return promptly (keeps
+	// --loop responsive). Otherwise drain until the client closes and treat
+	// transport teardown as the end of the run.
+	iters := drainCount
+	if iters <= 0 {
+		iters = 1 << 62
+	}
+	if err := rc.RecvDrain(iters, txDepth, rebuild); err != nil {
 		fmt.Println("raw server stopped:", err)
 	}
 	if post, poll := rc.ProbeStats(); post > 0 || poll > 0 {
