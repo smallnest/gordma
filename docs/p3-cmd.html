@@ -75,10 +75,10 @@
         读 <code>perftest/</code> 包是最好的范例。</p>
 
       <h2>高层工具的 <code>--batch</code></h2>
-      <p><code>go_rdmanet_bw</code> 默认用 <code>SendMsg</code> 逐条发送，是<strong>延迟受限</strong>的——同一时刻只有一条消息在飞，
+      <p><code>go_rdmanet_bw</code> 默认用 <code>SendMsg</code> 逐条发送，是<strong>延迟受限</strong>的——同一时刻只有一条消息 in-flight，
         吞吐 ≈ 1/单条往返延迟，远喂不满网卡（这也是它默认明显慢于 <code>go_send_bw</code> 的原因）。</p>
       <p>加上 <code>--batch N</code>（简写 <code>-b N</code>）后，客户端改用 <code>SendBatch</code>、服务端用 <code>RecvBatch</code>，
-        每次保持 <strong>N 条在飞</strong>，接近 perftest 工具的流水线吞吐。配合 <code>--poll busy</code> 去掉事件唤醒延迟效果更好：</p>
+        每次保持 <strong>N 条 in-flight</strong>，接近 perftest 工具的流水线吞吐。配合 <code>--poll busy</code> 去掉事件唤醒延迟效果更好：</p>
       <pre><code><span class="c"># 服务端（两端 -b 要一致）</span>
 ./bin/go_rdmanet_bw -d mlx5_1 -x 3 -b 32
 

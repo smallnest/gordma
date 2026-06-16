@@ -35,7 +35,7 @@
       <p>（吞吐为某台 400G RoCE v2 主机上的实测量级，仅供横向对比，会随硬件/配置变化。）</p>
 
       <h2>模式一：默认逐条 SendMsg</h2>
-      <p>不带任何开关时，客户端逐条 <code>SendMsg</code>。这是<strong>延迟受限</strong>的——同一时刻只有一条消息在飞，
+      <p>不带任何开关时，客户端逐条 <code>SendMsg</code>。这是<strong>延迟受限</strong>的——同一时刻只有一条消息 in-flight，
         吞吐 ≈ 1/单条往返延迟，远喂不满网卡。它演示的是 <code>Conn</code> 最朴素的用法，不是性能档。</p>
       <pre><code>./bin/go_rdmanet_bw -d mlx5_1 -x 3                          <span class="c"># 服务端</span>
 ./bin/go_rdmanet_bw -s 65536 -n 1000000 -d mlx5_1 -x 3 33.0.226.25:18515</code></pre>
@@ -51,7 +51,7 @@
 
       <h2>模式三：--raw 极限吞吐</h2>
       <p>加 <code>--raw</code> 切到 <a href="p2-rawconn.html">RawConn</a>：无封帧、无流控、单 goroutine post+busy-poll，
-        量级上追平底层 <code>perftest</code>。此模式下 <code>-b</code> 的含义变为 <strong>tx-depth</strong>（在飞 WR 数）。</p>
+        量级上追平底层 <code>perftest</code>。此模式下 <code>-b</code> 的含义变为 <strong>tx-depth</strong>（in-flight WR 数）。</p>
       <pre><code>./bin/go_rdmanet_bw --raw -d mlx5_1 -x 3 -b 128             <span class="c"># 服务端</span>
 ./bin/go_rdmanet_bw --raw -s 65536 -n 1000000 -d mlx5_1 -x 3 -b 128 33.0.226.25:18515</code></pre>
       <p>输出形如 <code>raw-batch Send(txDepth=128): sent ... Gb/s, ... Mpps</code>。

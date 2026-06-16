@@ -68,8 +68,8 @@ ibdev2netdev
       </ul>
 
       <h2>高层 go_rdmanet_bw 提速：--batch</h2>
-      <p><code>go_rdmanet_bw</code> 默认 <code>SendMsg</code> 逐条发，只有一条消息在飞，吞吐受单条往返延迟限制。
-        加 <code>--batch N</code>（简写 <code>-b N</code>）让它用 <code>SendBatch</code>/<code>RecvBatch</code> 保持 N 条在飞，
+      <p><code>go_rdmanet_bw</code> 默认 <code>SendMsg</code> 逐条发，只有一条消息 in-flight，吞吐受单条往返延迟限制。
+        加 <code>--batch N</code>（简写 <code>-b N</code>）让它用 <code>SendBatch</code>/<code>RecvBatch</code> 保持 N 条 in-flight，
         接近 perftest 的流水线吞吐；再配 <code>--poll busy</code> 去掉事件唤醒延迟：</p>
       <pre><code><span class="c"># 服务端（两端 -b 要一致）</span>
 ./bin/go_rdmanet_bw -d mlx5_1 -x 3 -b 32
