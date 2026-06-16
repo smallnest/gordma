@@ -37,6 +37,7 @@ func run(args []string) error {
 		size     = fs.IntP("size", "s", 65536, "message size in bytes")
 		iters    = fs.IntP("count", "n", 1000, "number of messages")
 		batch    = fs.IntP("batch", "b", 1, "messages per SendBatch/RecvBatch (1 = one-at-a-time SendMsg)")
+		depth    = fs.Int("depth", 0, "queue depth / credit window (0 = library default 128); set on both ends")
 		tcpPort  = fs.IntP("tcp-port", "p", 18515, "TCP listen/connect port for establishment")
 		handshk  = fs.Bool("handshake", false, "use TCP out-of-band handshake instead of rdma_cm")
 		pollMode = fs.String("poll", "event", "CQ poll mode: busy|event")
@@ -47,7 +48,10 @@ func run(args []string) error {
 	if *batch < 1 {
 		return fmt.Errorf("invalid --batch %d (want >= 1)", *batch)
 	}
-	opts, err := buildOptions(*device, *port, *gidIndex, *size, *handshk, *pollMode)
+	if *depth < 0 {
+		return fmt.Errorf("invalid --depth %d (want >= 0)", *depth)
+	}
+	opts, err := buildOptions(*device, *port, *gidIndex, *size, *depth, *handshk, *pollMode)
 	if err != nil {
 		return err
 	}
@@ -61,7 +65,7 @@ func run(args []string) error {
 
 // buildOptions translates the common flags into rdmanet.Options shared by both
 // the bw and lat tools.
-func buildOptions(device string, port, gidIndex, size int, handshake bool, pollMode string) ([]rdmanet.Option, error) {
+func buildOptions(device string, port, gidIndex, size, depth int, handshake bool, pollMode string) ([]rdmanet.Option, error) {
 	opts := []rdmanet.Option{
 		rdmanet.WithPort(port),
 		rdmanet.WithGIDIndex(gidIndex),
@@ -69,6 +73,9 @@ func buildOptions(device string, port, gidIndex, size int, handshake bool, pollM
 	}
 	if device != "" {
 		opts = append(opts, rdmanet.WithDevice(device))
+	}
+	if depth > 0 {
+		opts = append(opts, rdmanet.WithQueueDepth(depth))
 	}
 	if handshake {
 		opts = append(opts, rdmanet.WithHandshake())
