@@ -34,18 +34,19 @@ func main() {
 func run(args []string) error {
 	fs := flag.NewFlagSet("go_rdmanet_bw", flag.ContinueOnError)
 	var (
-		device   = fs.StringP("device", "d", "", "RDMA device name (default: first available)")
-		port     = fs.IntP("ib-port", "i", 1, "HCA port number")
-		gidIndex = fs.IntP("gid-index", "x", 0, "GID index (RoCE v2)")
-		size     = fs.IntP("size", "s", 65536, "message size in bytes")
-		iters    = fs.IntP("count", "n", 1000, "number of messages")
-		batch    = fs.IntP("batch", "b", 1, "messages per SendBatch/RecvBatch (1 = one-at-a-time SendMsg)")
-		depth    = fs.Int("depth", 0, "queue depth / credit window (0 = library default 128); set on both ends")
-		raw      = fs.Bool("raw", false, "use RawConn (low-level, no framing/flow-control) for near-perftest speed")
-		rawOne   = fs.Bool("raw-onebuf", false, "raw client: send from a single fixed region every iter (like perftest) instead of cycling slots")
-		tcpPort  = fs.IntP("tcp-port", "p", 18515, "TCP listen/connect port for establishment")
-		handshk  = fs.Bool("handshake", false, "use TCP out-of-band handshake instead of rdma_cm")
-		pollMode = fs.String("poll", "event", "CQ poll mode: busy|event")
+		device    = fs.StringP("device", "d", "", "RDMA device name (default: first available)")
+		port      = fs.IntP("ib-port", "i", 1, "HCA port number")
+		gidIndex  = fs.IntP("gid-index", "x", 0, "GID index (RoCE v2)")
+		size      = fs.IntP("size", "s", 65536, "message size in bytes")
+		iters     = fs.IntP("count", "n", 1000, "number of messages")
+		batch     = fs.IntP("batch", "b", 1, "messages per SendBatch/RecvBatch (1 = one-at-a-time SendMsg)")
+		depth     = fs.Int("depth", 0, "queue depth / credit window (0 = library default 128); set on both ends")
+		raw       = fs.Bool("raw", false, "use RawConn (low-level, no framing/flow-control) for near-perftest speed")
+		rawOne    = fs.Bool("raw-onebuf", false, "raw: use a single fixed region every iter (like perftest) instead of cycling slots; applies to client send buffer AND server recv buffer")
+		rawSingle = fs.Bool("raw-single", false, "raw client: post one signaled SEND at a time (RawConn.Pipeline) instead of batched submit (PipelineBatch), matching go_send_bw")
+		tcpPort   = fs.IntP("tcp-port", "p", 18515, "TCP listen/connect port for establishment")
+		handshk   = fs.Bool("handshake", false, "use TCP out-of-band handshake instead of rdma_cm")
+		pollMode  = fs.String("poll", "event", "CQ poll mode: busy|event")
 	)
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -68,9 +69,9 @@ func run(args []string) error {
 		}
 		opts := rawOptions(*device, *port, *gidIndex, *depth)
 		if fs.NArg() > 0 {
-			return runClientRaw(fs.Arg(0), *size, *iters, txDepth, *rawOne, opts)
+			return runClientRaw(fs.Arg(0), *size, *iters, txDepth, *rawOne, *rawSingle, opts)
 		}
-		return runServerRaw(fmt.Sprintf("0.0.0.0:%d", *tcpPort), *size, txDepth, opts)
+		return runServerRaw(fmt.Sprintf("0.0.0.0:%d", *tcpPort), *size, txDepth, *rawOne, opts)
 	}
 	opts, err := buildOptions(*device, *port, *gidIndex, *size, *depth, *handshk, *pollMode)
 	if err != nil {
@@ -218,8 +219,11 @@ func runClientBW(server string, size, iters, batch int, opts []rdmanet.Option) e
 }
 
 // runServerRaw is the RawConn passive side: accept, register one MR, and drain
-// recvs until the client closes (an RNR/transport error ends the run).
-func runServerRaw(addr string, size, txDepth int, opts []rdmanet.Option) error {
+// recvs until the client closes (an RNR/transport error ends the run). When
+// oneBuf is set the recv side reuses a single fixed 64KB region every iteration
+// (like perftest's go_send_bw server) instead of cycling through txDepth slots;
+// this keeps the receive-side working set hot to match the perftest baseline.
+func runServerRaw(addr string, size, txDepth int, oneBuf bool, opts []rdmanet.Option) error {
 	ln, err := rdmanet.ListenRaw(addr, opts...)
 	if err != nil {
 		return err
@@ -232,17 +236,24 @@ func runServerRaw(addr string, size, txDepth int, opts []rdmanet.Option) error {
 	}
 	defer func() { _ = rc.Close() }()
 
-	mr, err := rc.RegisterMemory(size * txDepth)
+	regSize := size * txDepth
+	if oneBuf {
+		regSize = size
+	}
+	mr, err := rc.RegisterMemory(regSize)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = mr.Close() }()
 
 	rebuild := func(wrID uint64) gordma.RecvWR {
-		slot := int(wrID) % txDepth
+		off := 0
+		if !oneBuf {
+			off = (int(wrID) % txDepth) * size
+		}
 		return gordma.RecvWR{
 			WRID:   wrID,
-			SGList: []gordma.SGE{gordma.SGEFromMR(mr, slot*size, size)},
+			SGList: []gordma.SGE{gordma.SGEFromMR(mr, off, size)},
 		}
 	}
 	// The client controls the count and closes when done; treat transport
@@ -258,8 +269,12 @@ func runServerRaw(addr string, size, txDepth int, opts []rdmanet.Option) error {
 // perftest go_send_bw tool uses. When oneBuf is set it sends the same fixed
 // region every iteration (matching perftest's hot 64KB working set) instead of
 // cycling through txDepth slots; this is a diagnostic to test whether the
-// rotating working set is what separates RawConn from perftest.
-func runClientRaw(server string, size, iters, txDepth int, oneBuf bool, opts []rdmanet.Option) error {
+// rotating working set is what separates RawConn from perftest. When single is
+// set it posts one signaled SEND at a time via RawConn.Pipeline (per-WR
+// PostSend), exactly like go_send_bw, instead of the batched PipelineBatch
+// submit; combine --raw-onebuf --raw-single (with --raw-onebuf on the server
+// too) to align RawConn fully with the perftest baseline.
+func runClientRaw(server string, size, iters, txDepth int, oneBuf, single bool, opts []rdmanet.Option) error {
 	rc, err := rdmanet.DialRaw(server, opts...)
 	if err != nil {
 		return err
@@ -276,8 +291,7 @@ func runClientRaw(server string, size, iters, txDepth int, oneBuf bool, opts []r
 	}
 	defer func() { _ = mr.Close() }()
 
-	start := time.Now()
-	err = rc.PipelineBatch(iters, txDepth, func(wrID uint64) gordma.SendWR {
+	build := func(wrID uint64) gordma.SendWR {
 		off := 0
 		if !oneBuf {
 			off = (int(wrID) % txDepth) * size
@@ -288,7 +302,16 @@ func runClientRaw(server string, size, iters, txDepth int, oneBuf bool, opts []r
 			SGList:   []gordma.SGE{gordma.SGEFromMR(mr, off, size)},
 			Signaled: true,
 		}
-	})
+	}
+
+	start := time.Now()
+	if single {
+		err = rc.Pipeline(iters, txDepth, func(wrID uint64) error {
+			return rc.PostSend(build(wrID))
+		})
+	} else {
+		err = rc.PipelineBatch(iters, txDepth, build)
+	}
 	if err != nil {
 		return err
 	}
@@ -296,8 +319,11 @@ func runClientRaw(server string, size, iters, txDepth int, oneBuf bool, opts []r
 	gbps := float64(size) * float64(iters) * 8 / elapsed.Seconds() / 1e9
 	mpps := float64(iters) / elapsed.Seconds() / 1e6
 	label := "raw-batch"
+	if single {
+		label = "raw-single"
+	}
 	if oneBuf {
-		label = "raw-batch-onebuf"
+		label += "-onebuf"
 	}
 	fmt.Printf("%s Send(txDepth=%d): sent %d x %d bytes in %v: %.2f Gb/s, %.3f Mpps\n",
 		label, txDepth, iters, size, elapsed, gbps, mpps)
