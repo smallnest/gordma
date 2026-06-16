@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>gordma · 术语表</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-page="glossary">
+<div class="layout">
+  <aside class="sidebar">
+    <a class="brand" href="index.html" style="text-decoration:none">
+      <div class="logo">G</div>
+      <div class="name">gordma</div>
+    </a>
+    <div class="brand-sub">Go 语言 RDMA 网络库 · 教程</div>
+    <nav id="sidebar-nav" class="nav"></nav>
+  </aside>
+  <main class="content">
+    <div class="content-inner">
+      <span class="kicker">开始</span>
+      <h1>术语表</h1>
+      <p class="lede">RDMA 编程和普通的 socket 网络编程很不一样——它有一整套自己的对象、动词和缩写。
+        这一页把全教程会用到的 RDMA 概念与相关编程术语集中起来，按主题分组，方便随时回查。
+        正文里第一次出现某个术语时，可以回到这里对照。</p>
+
+      <!-- PLACEHOLDER_TERMS -->
+
+      <h2 id="g-basics">基础概念</h2>
+      <table>
+        <thead><tr><th>术语</th><th>英文 / 全称</th><th>含义</th></tr></thead>
+        <tbody>
+          <tr><td><strong>RDMA</strong></td><td>Remote Direct Memory Access</td><td>远程直接内存访问：一台机器的网卡直接读写另一台机器的内存，绕过对端 CPU 与内核。</td></tr>
+          <tr><td><strong>内核旁路</strong></td><td>Kernel Bypass</td><td>应用在用户态直接与网卡交互，数据路径不经过内核协议栈，省去系统调用与上下文切换。</td></tr>
+          <tr><td><strong>零拷贝</strong></td><td>Zero-copy</td><td>网卡用 DMA 直接搬运已注册的用户态缓冲区，无需内核↔用户的多次内存复制。</td></tr>
+          <tr><td><strong>CPU 卸载</strong></td><td>CPU Offload</td><td>传输、重传、校验由网卡硬件完成；单边操作时对端 CPU 完全不参与。</td></tr>
+          <tr><td><strong>DMA</strong></td><td>Direct Memory Access</td><td>直接内存访问：硬件（网卡）不经 CPU 直接读写主存。</td></tr>
+          <tr><td><strong>HCA</strong></td><td>Host Channel Adapter</td><td>主机通道适配器，即 RDMA 网卡，如 <code>mlx5_0</code>。</td></tr>
+          <tr><td><strong>Verbs</strong></td><td>—</td><td>RDMA 的编程接口（一组"动词"操作）；用户态实现是 <code>libibverbs</code>。</td></tr>
+          <tr><td><strong>rdma-core</strong></td><td>—</td><td>Linux 的 RDMA 用户态库集合，含 <code>libibverbs</code> 与 <code>librdmacm</code>。</td></tr>
+        </tbody>
+      </table>
+
+      <h2 id="g-objects">Verbs 对象模型</h2>
+      <table>
+        <thead><tr><th>术语</th><th>英文 / 全称</th><th>含义</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Device</strong></td><td>设备</td><td>一块 RDMA 网卡（HCA）。</td></tr>
+          <tr><td><strong>Context</strong></td><td>设备上下文</td><td>打开设备后的句柄，后续所有资源都从它派生。</td></tr>
+          <tr><td><strong>PD</strong></td><td>Protection Domain（保护域）</td><td>把 MR / QP 等资源归到同一组，做隔离与权限边界。</td></tr>
+          <tr><td><strong>MR</strong></td><td>Memory Region（内存区域）</td><td>注册（pin 住）的内存，网卡只能访问已注册内存；返回 <code>lkey</code>/<code>rkey</code>。</td></tr>
+          <tr><td><strong>CQ</strong></td><td>Completion Queue（完成队列）</td><td>每个操作完成后，网卡往这里放一个完成事件（WC）。</td></tr>
+          <tr><td><strong>QP</strong></td><td>Queue Pair（队列对）</td><td>发送队列(SQ)+接收队列(RQ)，RDMA 的"连接"端点，类比 socket。</td></tr>
+          <tr><td><strong>SQ / RQ</strong></td><td>Send / Receive Queue</td><td>QP 内的发送队列与接收队列。</td></tr>
+          <tr><td><strong>AH</strong></td><td>Address Handle（地址句柄）</td><td>UD 传输里描述对端地址的对象。</td></tr>
+          <tr><td><strong>CompChannel</strong></td><td>Completion Channel（完成通道）</td><td>让你能"等待"CQ 上的事件而非忙等轮询。</td></tr>
+          <tr><td><strong>注册 / pin</strong></td><td>Register / Pin</td><td>把内存固定在物理页并告知网卡，使其可被 DMA 访问。</td></tr>
+        </tbody>
+      </table>
+
+      <h2 id="g-keys">钥匙与地址</h2>
+      <table>
+        <thead><tr><th>术语</th><th>英文 / 全称</th><th>含义</th></tr></thead>
+        <tbody>
+          <tr><td><strong>lkey</strong></td><td>Local Key</td><td>本地工作请求引用自己缓冲区时用的 MR 钥匙。</td></tr>
+          <tr><td><strong>rkey</strong></td><td>Remote Key</td><td>授权<strong>远端</strong>对本地 MR 做 RDMA Read/Write，需带外发给对方。</td></tr>
+          <tr><td><strong>GID</strong></td><td>Global Identifier</td><td>16 字节全局地址，RoCE 下用它寻址（内含 IP 信息）。</td></tr>
+          <tr><td><strong>GID Index</strong></td><td>GID 表索引</td><td>网卡 GID 表的行号，区分 RoCE v1/v2 与 IPv4/v6；RoCE v2 常在索引 3。</td></tr>
+          <tr><td><strong>LID</strong></td><td>Local Identifier</td><td>InfiniBand 子网内的本地标识，IB 寻址用（RoCE 下为 0）。</td></tr>
+          <tr><td><strong>QPN</strong></td><td>Queue Pair Number</td><td>队列对编号，建连时需交换对端 QPN。</td></tr>
+          <tr><td><strong>PSN</strong></td><td>Packet Sequence Number</td><td>包序列号，迁移 QP 到 RTR/RTS 时设置起始值。</td></tr>
+          <tr><td><strong>QKey</strong></td><td>Queue Key</td><td>UD 传输的密钥，两端必须一致数据报才被接受。</td></tr>
+          <tr><td><strong>GRH</strong></td><td>Global Routing Header</td><td>UD 每个收到的数据报前的 40 字节全局路由头，需跳过才是负载。</td></tr>
+        </tbody>
+      </table>
+
+      <h2 id="g-transport">传输与操作</h2>
+      <table>
+        <thead><tr><th>术语</th><th>英文 / 全称</th><th>含义</th></tr></thead>
+        <tbody>
+          <tr><td><strong>RC</strong></td><td>Reliable Connected</td><td>可靠连接，面向连接、有序可靠，类比 TCP；支持 Send/Recv 与单边 Write/Read。</td></tr>
+          <tr><td><strong>UD</strong></td><td>Unreliable Datagram</td><td>不可靠数据报，无连接、单条不超 MTU，类比 UDP；仅 Send/Recv。</td></tr>
+          <tr><td><strong>UC</strong></td><td>Unreliable Connected</td><td>不可靠连接（gordma 非主要目标）。</td></tr>
+          <tr><td><strong>双边操作</strong></td><td>Two-sided（Send/Recv）</td><td>接收方需预投递 Recv WR，双方 CPU 都参与，语义最像 socket。</td></tr>
+          <tr><td><strong>单边操作</strong></td><td>One-sided（RDMA Write/Read）</td><td>发起方凭 <code>rkey</code>+远端地址直接读写对端内存，对端 CPU 不感知，时延最低。</td></tr>
+          <tr><td><strong>MTU</strong></td><td>Maximum Transmission Unit</td><td>路径最大传输单元（256/512/1024/2048/4096 字节）。</td></tr>
+          <tr><td><strong>RoCE</strong></td><td>RDMA over Converged Ethernet</td><td>在以太网上跑 RDMA；<strong>RoCE v2</strong>（基于 UDP/IP，可路由）最常用。</td></tr>
+          <tr><td><strong>InfiniBand (IB)</strong></td><td>—</td><td>RDMA 最早的专用网络，用 LID 寻址。</td></tr>
+        </tbody>
+      </table>
+
+      <h2 id="g-statemachine">QP 状态机</h2>
+      <table>
+        <thead><tr><th>术语</th><th>英文 / 全称</th><th>含义</th></tr></thead>
+        <tbody>
+          <tr><td><strong>RESET</strong></td><td>—</td><td>QP 初始状态。</td></tr>
+          <tr><td><strong>INIT</strong></td><td>Initialized</td><td>设好端口与访问权限，但还不能收发。</td></tr>
+          <tr><td><strong>RTR</strong></td><td>Ready To Receive</td><td>填入对端 QPN/PSN/GID 等，可以开始接收。</td></tr>
+          <tr><td><strong>RTS</strong></td><td>Ready To Send</td><td>填入本地起始 PSN，可以开始发送。</td></tr>
+          <tr><td><strong>状态迁移</strong></td><td>Modify QP</td><td>RESET→INIT→RTR→RTS，靠 <code>ibv_modify_qp</code> 逐步设置。</td></tr>
+          <tr><td><strong>带外握手</strong></td><td>Out-of-band Handshake</td><td>用普通 TCP 或 librdmacm 交换 QPN/PSN/GID/rkey，因为这些没法用 RDMA 本身交换。</td></tr>
+          <tr><td><strong>rdma_cm</strong></td><td>RDMA Connection Manager</td><td><code>librdmacm</code> 提供的类 socket 建连流程，完成后 QP 直接在 RTS。</td></tr>
+          <tr><td><strong>RNR</strong></td><td>Receiver Not Ready</td><td>发来时对端没有可用 Recv WR，触发重试机制。</td></tr>
+        </tbody>
+      </table>
+
+      <h2 id="g-dataflow">工作请求与完成</h2>
+      <table>
+        <thead><tr><th>术语</th><th>英文 / 全称</th><th>含义</th></tr></thead>
+        <tbody>
+          <tr><td><strong>WR</strong></td><td>Work Request（工作请求）</td><td>投递到 QP 的一次收发请求，由网卡异步执行。</td></tr>
+          <tr><td><strong>SR / RR</strong></td><td>Send / Receive Request</td><td>发送工作请求 / 接收工作请求（<code>SendWR</code>/<code>RecvWR</code>）。</td></tr>
+          <tr><td><strong>post</strong></td><td>Post（投递）</td><td>把 WR 提交到发送/接收队列（<code>ibv_post_send</code>/<code>ibv_post_recv</code>）。</td></tr>
+          <tr><td><strong>SGE</strong></td><td>Scatter/Gather Element</td><td>指向已注册 MR 一段内存的描述（地址+长度+lkey）；一个 WR 可带多个。</td></tr>
+          <tr><td><strong>WC</strong></td><td>Work Completion（完成项）</td><td>轮询 CQ 得到的一条完成记录，含 WRID、状态、字节数等。</td></tr>
+          <tr><td><strong>WRID</strong></td><td>Work Request ID</td><td>post 时填的用户标识，在对应的 WC 里原样返回，用来对号。</td></tr>
+          <tr><td><strong>poll</strong></td><td>Poll（轮询）</td><td>从 CQ 取出完成项（<code>ibv_poll_cq</code>）。</td></tr>
+          <tr><td><strong>signaled / unsignaled</strong></td><td>—</td><td>WR 是否产生完成事件；选择性 signal 可减少 CQE 数量、提升消息率。</td></tr>
+          <tr><td><strong>inline</strong></td><td>Inline Send</td><td>小消息把负载内联进 WR，省一次内存读取的优化。</td></tr>
+          <tr><td><strong>opcode</strong></td><td>—</td><td>WR 的操作类型：SEND / RDMA_WRITE / RDMA_READ 等。</td></tr>
+        </tbody>
+      </table>
+
+      <h2 id="g-perf">性能与流控</h2>
+      <table>
+        <thead><tr><th>术语</th><th>英文 / 全称</th><th>含义</th></tr></thead>
+        <tbody>
+          <tr><td><strong>in-flight</strong></td><td>在途 / 未完成</td><td>已 post 但还没收到完成的 WR 数；流水线深度即同时 in-flight 的数量。</td></tr>
+          <tr><td><strong>tx-depth / queue depth</strong></td><td>发送深度 / 队列深度</td><td>允许同时 in-flight 的 WR 上限（QP 的 <code>max_send_wr</code>/<code>max_recv_wr</code>）。</td></tr>
+          <tr><td><strong>流水线</strong></td><td>Pipelining</td><td>同时让多个 WR in-flight 以隐藏单次往返延迟、打满带宽。</td></tr>
+          <tr><td><strong>忙轮询 / 事件驱动</strong></td><td>Busy-poll / Event-driven</td><td>排空 CQ 的两种方式：自旋轮询（低延迟、吃 CPU）vs 等完成通道事件（省 CPU、略有延迟）。</td></tr>
+          <tr><td><strong>信用流控</strong></td><td>Credit-based Flow Control</td><td>发送方按对端已投递的 Recv 数量（信用）限发，避免 RNR。</td></tr>
+          <tr><td><strong>背压</strong></td><td>Backpressure</td><td>接收方处理不过来时反向限制发送速率。</td></tr>
+          <tr><td><strong>bounce buffer</strong></td><td>反弹缓冲区</td><td>库托管的中转缓冲：先把用户数据拷进它再发；零拷贝就是省掉这次拷贝。</td></tr>
+          <tr><td><strong>批量提交</strong></td><td>Batched Post</td><td>用 WR 链表一次 <code>ibv_post_send</code> 提交多个 WR，摊薄每次调用开销。</td></tr>
+          <tr><td><strong>分片 / 重组</strong></td><td>Fragmentation / Reassembly</td><td>大消息拆成多帧发送、接收端重组回完整消息。</td></tr>
+          <tr><td><strong>带宽 / 时延</strong></td><td>Bandwidth (bw) / Latency (lat)</td><td>吞吐（Gb/s）与往返延迟，对应 <code>*_bw</code>/<code>*_lat</code> 工具。</td></tr>
+          <tr><td><strong>Mpps</strong></td><td>Million packets/messages per second</td><td>每秒百万消息数，衡量消息率（小包瓶颈常在此而非带宽）。</td></tr>
+        </tbody>
+      </table>
+
+      <h2 id="g-gordma">gordma / 编程相关</h2>
+      <table>
+        <thead><tr><th>术语</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr><td><strong>cgo</strong></td><td>Go 调用 C 的机制；gordma 用它封装 <code>libibverbs</code>/<code>librdmacm</code>。每次跨界有固定开销。</td></tr>
+          <tr><td><strong>build tag / 构建标签</strong></td><td>Go 的条件编译标记；gordma 用 <code>linux &amp;&amp; cgo</code> 选真实实现、否则选 stub。</td></tr>
+          <tr><td><strong>stub</strong></td><td>桩实现：非 Linux/无 cgo 时编译，入口返回 <code>ErrNotSupported</code> 而非崩溃。</td></tr>
+          <tr><td><strong>perftest</strong></td><td>C 版 RDMA 性能基准工具集；gordma 的 <code>cmd/</code> 工具对标它。</td></tr>
+          <tr><td><code>gordma</code> 包</td><td>底层：一比一映射 verbs 对象模型，完全控制。</td></tr>
+          <tr><td><code>rdmanet</code> 包</td><td>高层：net 风格的 <code>Conn</code>/<code>Listener</code>/<code>PacketConn</code>，隐藏注册/投递/轮询/流控。</td></tr>
+          <tr><td><code>Conn</code></td><td>RC 可靠连接端点（消息语义 + 字节流适配器）。</td></tr>
+          <tr><td><code>PacketConn</code></td><td>UD 数据报端点（<code>WriteTo</code>/<code>ReadFrom</code>）。</td></tr>
+          <tr><td><code>RawConn</code></td><td>低层高吞吐端点：无封帧/流控/handoff，量级追平 perftest。</td></tr>
+          <tr><td><strong>Addr</strong></td><td>UD 端点地址，格式 <code>gid%qpn[#qkey]</code>。</td></tr>
+          <tr><td><strong>Registry</strong></td><td>UD 的"名字→Addr"目录，带外发现对端。</td></tr>
+        </tbody>
+      </table>
+
+      <div class="callout tip">
+        <span class="tag">下一步</span>
+        词汇备齐了，从 <a href="p1-what.html">第一部分：什么是 RDMA</a> 开始正式学习。读到不认识的缩写随时回来查。
+      </div>
+
+
+      <div id="page-nav" class="page-nav"></div>
+      <div class="foot">gordma 教程</div>
+    </div>
+  </main>
+</div>
+<script src="nav.js"></script>
+</body>
+</html>

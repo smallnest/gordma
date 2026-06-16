@@ -7,7 +7,8 @@ const TOC = [
   {
     part: "开始",
     pages: [
-      { id: "index", title: "概览", file: "index.html" },
+      { id: "index",    title: "概览",   file: "index.html" },
+      { id: "glossary", title: "术语表", file: "glossary.html" },
     ],
   },
   {
