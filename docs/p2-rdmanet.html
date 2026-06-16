@@ -18,7 +18,7 @@
   </aside>
   <main class="content">
     <div class="content-inner">
-      <span class="kicker">第二部分 · 4 / 7</span>
+      <span class="kicker">第二部分 · 4 / 8</span>
       <h1>高层 rdmanet</h1>
       <p class="lede">底层那一长串样板，<code>rdmanet</code> 全替你做了：内存注册、工作请求投递、完成队列轮询、流控。
         它提供三个 <code>net</code> 风格的核心类型，让你像写 TCP/UDP 一样写 RDMA。</p>
@@ -112,7 +112,7 @@ conn.<span class="f">SendMsg</span>([]<span class="k">byte</span>(<span class="s
 
       <div class="callout tip">
         <span class="tag">下一步</span>
-        <code>Dial</code>/<code>Listen</code> 背后其实有两种建连方式。下一节讲 <a href="p2-connect.html">rdma_cm 与 TCP 握手</a>。
+        <code>Conn</code> 适合大多数业务；想要贴近网卡线速的极限吞吐，看下一节 <a href="p2-rawconn.html">RawConn 高速读写</a>。
       </div>
 
       <div id="page-nav" class="page-nav"></div>

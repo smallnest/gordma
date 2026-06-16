@@ -28,6 +28,7 @@ const TOC = [
       { id: "p2-layers",    title: "两层 API",            file: "p2-layers.html" },
       { id: "p2-lowlevel",  title: "底层 verbs 封装",     file: "p2-lowlevel.html" },
       { id: "p2-rdmanet",   title: "高层 rdmanet",        file: "p2-rdmanet.html" },
+      { id: "p2-rawconn",   title: "RawConn 高速读写",     file: "p2-rawconn.html" },
       { id: "p2-connect",   title: "两种连接方式",         file: "p2-connect.html" },
       { id: "p2-perf",      title: "性能选项",            file: "p2-perf.html" },
       { id: "p2-stub",      title: "跨平台 stub",         file: "p2-stub.html" },
@@ -37,6 +38,7 @@ const TOC = [
     part: "第三部分 · cmd 与 examples",
     pages: [
       { id: "p3-cmd",          title: "cmd 性能工具",      file: "p3-cmd.html" },
+      { id: "p3-rdmanet-bw",   title: "go_rdmanet_bw 详解", file: "p3-rdmanet-bw.html" },
       { id: "p3-flags",        title: "通用命令行参数",     file: "p3-flags.html" },
       { id: "p3-run-cmd",      title: "运行性能测试",       file: "p3-run-cmd.html" },
       { id: "p3-examples-run", title: "运行 examples",     file: "p3-examples-run.html" },

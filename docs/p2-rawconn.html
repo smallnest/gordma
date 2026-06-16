@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>gordma · RawConn 高速读写</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-page="p2-rawconn">
+<div class="layout">
+  <aside class="sidebar">
+    <a class="brand" href="index.html" style="text-decoration:none">
+      <div class="logo">G</div>
+      <div class="name">gordma</div>
+    </a>
+    <div class="brand-sub">Go 语言 RDMA 网络库 · 教程</div>
+    <nav id="sidebar-nav" class="nav"></nav>
+  </aside>
+  <main class="content">
+    <div class="content-inner">
+      <span class="kicker">第二部分 · 5 / 8</span>
+      <h1>RawConn 高速读写</h1>
+      <p class="lede"><code>Conn</code> 的 net 风格很好用，但为「保留消息边界 + 流控 + 易用」付出的固定开销，
+        让它的吞吐封顶在远低于网卡线速的水平。<code>RawConn</code> 把这些都剥掉，直接暴露
+        「注册内存 + 投递 WR + 自己轮询 CQ」，让你以贴近 <code>perftest</code> 的速度收发。</p>
+
+      <h2>为什么需要它</h2>
+      <p><code>Conn</code> 把每条消息封帧、做信用流控、经 bounce buffer 拷贝，再通过一个后台 poller goroutine
+        把完成事件交回应用 goroutine。这些都是它语义的必需品，但叠加起来限制了吞吐——在 64KB 大包上实测约
+        <strong>20+ Gb/s</strong>，远没喂满高速网卡。</p>
+      <p><code>RawConn</code> 面向「就是要极限吞吐」的场景：同一个 goroutine 里 post + busy-poll，
+        无封帧、无流控、无 handoff。实测同一张 400G 网卡上，<code>RawConn</code> 的 64KB 大包吞吐能到
+        <strong>230+ Gb/s</strong>，是 <code>Conn</code> 的约 10 倍，量级上追平底层 <code>perftest</code> 工具。</p>
+
+      <div class="callout note">
+        <span class="tag">取舍</span>
+        <code>RawConn</code> 把易用性换成了速度，所以它<strong>不</strong>替你做这些：不保留消息边界（一次 Send 就是一个工作请求）、
+        不做流控（你得自己保证在飞的 Send 不超过对端已投递的 Recv，否则 RNR）、不托管缓冲区（自己注册 MR、构造 SGE）。
+      </div>
+
+      <h2>三种角色的 API</h2>
+      <table>
+        <thead><tr><th>类别</th><th>方法</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr><td>建连</td><td><code>DialRaw</code> / <code>ListenRaw</code> / <code>Accept</code></td><td>走 TCP 带外握手（交换对端 RKey/地址，故支持单边 Write/Read）</td></tr>
+          <tr><td>内存</td><td><code>RegisterMemory(size)</code></td><td>注册一块本地+远端可读写的 MR</td></tr>
+          <tr><td>原语</td><td><code>PostSend</code> / <code>PostRecv</code> / <code>Poll</code></td><td>薄包装，零额外开销</td></tr>
+          <tr><td>批量</td><td><code>PostSendBatch</code> / <code>PipelineBatch</code></td><td>一次 cgo 调用提交多个 WR，提升消息率</td></tr>
+          <tr><td>吞吐循环</td><td><code>Pipeline</code> / <code>RecvDrain</code></td><td>内置的主动/被动流水线，开箱即用</td></tr>
+          <tr><td>逃生舱</td><td><code>QP()</code> / <code>CQ()</code> / <code>PD()</code> / <code>PeerRKey()</code> / <code>PeerAddr()</code></td><td>需要时下沉到底层 gordma</td></tr>
+        </tbody>
+      </table>
+
+      <h2>发送方：内置流水线</h2>
+      <p>最省事的用法是 <code>PipelineBatch</code>：保持 <code>txDepth</code> 个 signaled WR 在飞，每个完成就补一个，
+        直到发满 <code>iters</code> 条。这正是 <code>perftest</code> 打满线速的那套循环：</p>
+      <pre><code>rc, _ := rdmanet.<span class="f">DialRaw</span>(addr,
+    rdmanet.<span class="f">WithDevice</span>(<span class="s">"mlx5_1"</span>),
+    rdmanet.<span class="f">WithGIDIndex</span>(<span class="s">3</span>),
+    rdmanet.<span class="f">WithQueueDepth</span>(<span class="s">128</span>))
+<span class="k">defer</span> rc.<span class="f">Close</span>()
+
+mr, _ := rc.<span class="f">RegisterMemory</span>(size * txDepth)
+<span class="k">defer</span> mr.<span class="f">Close</span>()
+
+rc.<span class="f">PipelineBatch</span>(iters, txDepth, <span class="k">func</span>(wrID <span class="k">uint64</span>) gordma.SendWR {
+    slot := <span class="k">int</span>(wrID) % txDepth
+    <span class="k">return</span> gordma.SendWR{
+        WRID:     wrID,
+        Opcode:   gordma.OpSend,
+        SGList:   []gordma.SGE{gordma.<span class="f">SGEFromMR</span>(mr, slot*size, size)},
+        Signaled: <span class="k">true</span>,
+    }
+})</code></pre>
+
+      <h2>接收方：RecvDrain</h2>
+      <p>被动端（Send/Recv 的接收侧）用 <code>RecvDrain</code>：预投 <code>txDepth</code> 个 recv，收到一个补一个：</p>
+      <pre><code>rc, _ := ln.<span class="f">Accept</span>()
+mr, _ := rc.<span class="f">RegisterMemory</span>(size * txDepth)
+rc.<span class="f">RecvDrain</span>(iters, txDepth, <span class="k">func</span>(wrID <span class="k">uint64</span>) gordma.RecvWR {
+    slot := <span class="k">int</span>(wrID) % txDepth
+    <span class="k">return</span> gordma.RecvWR{WRID: wrID, SGList: []gordma.SGE{gordma.<span class="f">SGEFromMR</span>(mr, slot*size, size)}}
+})</code></pre>
+
+      <h2>单边 Write / Read</h2>
+      <p>因为 <code>RawConn</code> 走 TCP 握手，对端的 <code>RKey</code> 和远端地址已经交换好，可以直接做单边操作——
+        在 WR 里换 Opcode、填 <code>PeerAddr()</code>/<code>PeerRKey()</code> 即可，<strong>对端 CPU 不参与</strong>：</p>
+      <pre><code>rc.<span class="f">PostSend</span>(gordma.SendWR{
+    WRID:       <span class="s">1</span>,
+    Opcode:     gordma.OpWrite,           <span class="c">// 或 OpRead</span>
+    SGList:     []gordma.SGE{gordma.<span class="f">SGEFromMR</span>(mr, <span class="s">0</span>, size)},
+    RemoteAddr: rc.<span class="f">PeerAddr</span>(),
+    RKey:       rc.<span class="f">PeerRKey</span>(),
+    Signaled:   <span class="k">true</span>,
+})</code></pre>
+
+      <h2>批量提交：PostSendBatch</h2>
+      <p>每次 <code>PostSend</code> 是一次 Go→C 的 cgo 跨界。小包高频时，这个固定开销会成为消息率瓶颈。
+        <code>PostSendBatch</code> 用 C 侧的 WR 链表把 N 个工作请求<strong>一次 <code>ibv_post_send</code> 提交</strong>，
+        把 cgo 边界从「每 WR 一次」降到「每批一次」。实测 1KB 小包消息率因此提升约一个数量级。</p>
+      <div class="callout note">
+        <span class="tag">限制</span>
+        <code>PostSendBatch</code> 只接受快路径形态：每个 WR <strong>单 SGE</strong>、统一 opcode（SEND/WRITE/READ）、
+        无 inline/UD/立即数。更复杂的请求用逐个 <code>PostSend</code>。
+      </div>
+
+      <h2>怎么选：Conn vs RawConn</h2>
+      <table>
+        <thead><tr><th></th><th><code>Conn</code></th><th><code>RawConn</code></th></tr></thead>
+        <tbody>
+          <tr><td>消息边界</td><td>保留（<code>SendMsg</code>=<code>RecvMsg</code>）</td><td>不保留（你自己分帧）</td></tr>
+          <tr><td>流控/背压</td><td>内置信用流控</td><td>无，自己控制在飞数</td></tr>
+          <tr><td>缓冲区</td><td>库托管（bounce）</td><td>自己注册 MR</td></tr>
+          <tr><td>大消息分片</td><td>透明</td><td>自己处理</td></tr>
+          <tr><td>吞吐（64KB）</td><td>~20+ Gb/s</td><td>~230+ Gb/s</td></tr>
+          <tr><td>定位</td><td>写业务、要 net 风格</td><td>压测 / 极限吞吐数据面</td></tr>
+        </tbody>
+      </table>
+      <p>一句话：<strong>先用 <code>Conn</code>，确实需要榨干网卡时再上 <code>RawConn</code></strong>。两者都基于同一套底层
+        <code>gordma</code> 资源，随时可以下沉到 <code>QP()</code>/<code>CQ()</code> 自己驱动。</p>
+
+      <div class="callout tip">
+        <span class="tag">下一步</span>
+        <code>RawConn</code> 也走握手建连。下一节系统讲 <a href="p2-connect.html">两种连接方式</a>（rdma_cm 与 TCP 握手）。
+      </div>
+
+      <div id="page-nav" class="page-nav"></div>
+      <div class="foot">gordma 教程</div>
+    </div>
+  </main>
+</div>
+<script src="nav.js"></script>
+</body>
+</html>

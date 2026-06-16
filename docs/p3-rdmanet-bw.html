@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>gordma · go_rdmanet_bw 详解</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-page="p3-rdmanet-bw">
+<div class="layout">
+  <aside class="sidebar">
+    <a class="brand" href="index.html" style="text-decoration:none">
+      <div class="logo">G</div>
+      <div class="name">gordma</div>
+    </a>
+    <div class="brand-sub">Go 语言 RDMA 网络库 · 教程</div>
+    <nav id="sidebar-nav" class="nav"></nav>
+  </aside>
+  <main class="content">
+    <div class="content-inner">
+      <span class="kicker">第三部分 · 2 / 7</span>
+      <h1>go_rdmanet_bw 详解</h1>
+      <p class="lede"><code>go_rdmanet_bw</code> 不只是「高层带宽工具」——它内置了三种发送方式，正好对应
+        <code>rdmanet</code> 从易用到极致吞吐的不同档位。理解这三种模式，也就理解了高层 API 的性能边界在哪。</p>
+
+      <h2>三种模式速查</h2>
+      <table>
+        <thead><tr><th>模式</th><th>开关</th><th>用的 API</th><th>典型吞吐(64KB)</th></tr></thead>
+        <tbody>
+          <tr><td>逐条发送</td><td>默认</td><td><code>Conn.SendMsg</code></td><td>~18 Gb/s</td></tr>
+          <tr><td>批量消息</td><td><code>-b N</code></td><td><code>Conn.SendBatch</code></td><td>~28 Gb/s</td></tr>
+          <tr><td>RawConn</td><td><code>--raw</code></td><td><code>RawConn.PipelineBatch</code></td><td>~230 Gb/s</td></tr>
+        </tbody>
+      </table>
+      <p>（吞吐为某台 400G RoCE v2 主机上的实测量级，仅供横向对比，会随硬件/配置变化。）</p>
+
+      <h2>模式一：默认逐条 SendMsg</h2>
+      <p>不带任何开关时，客户端逐条 <code>SendMsg</code>。这是<strong>延迟受限</strong>的——同一时刻只有一条消息在飞，
+        吞吐 ≈ 1/单条往返延迟，远喂不满网卡。它演示的是 <code>Conn</code> 最朴素的用法，不是性能档。</p>
+      <pre><code>./bin/go_rdmanet_bw -d mlx5_1 -x 3                          <span class="c"># 服务端</span>
+./bin/go_rdmanet_bw -s 65536 -n 1000000 -d mlx5_1 -x 3 33.0.226.25:18515</code></pre>
+
+      <h2>模式二：--batch 批量消息</h2>
+      <p>加 <code>-b N</code>（即 <code>--batch</code>）后，客户端改用 <code>SendBatch</code>、服务端用 <code>RecvBatch</code>，
+        摊薄每次调用的固定开销。注意：<code>Conn</code> 仍带封帧、信用流控、bounce 拷贝，所以即便批量，
+        吞吐提升也有限——这恰恰是 <a href="p2-rawconn.html">RawConn</a> 存在的理由。</p>
+      <pre><code>./bin/go_rdmanet_bw -d mlx5_1 -x 3 -b 32                    <span class="c"># 服务端（两端 -b 不必一致，但都要够大）</span>
+./bin/go_rdmanet_bw -s 65536 -n 1000000 -d mlx5_1 -x 3 -b 32 33.0.226.25:18515</code></pre>
+      <p>输出带模式标签，例如 <code>SendBatch(32): sent ... Gb/s, ... Mpps</code>。
+        服务端无需 <code>-n</code>——收到客户端关闭（<code>io.EOF</code>）即结束。</p>
+
+      <h2>模式三：--raw 极限吞吐</h2>
+      <p>加 <code>--raw</code> 切到 <a href="p2-rawconn.html">RawConn</a>：无封帧、无流控、单 goroutine post+busy-poll，
+        量级上追平底层 <code>perftest</code>。此模式下 <code>-b</code> 的含义变为 <strong>tx-depth</strong>（在飞 WR 数）。</p>
+      <pre><code>./bin/go_rdmanet_bw --raw -d mlx5_1 -x 3 -b 128             <span class="c"># 服务端</span>
+./bin/go_rdmanet_bw --raw -s 65536 -n 1000000 -d mlx5_1 -x 3 -b 128 33.0.226.25:18515</code></pre>
+      <p>输出形如 <code>raw-batch Send(txDepth=128): sent ... Gb/s, ... Mpps</code>。
+        RawConn 恒用 TCP 握手 + 忙轮询，所以 <code>--poll</code>/<code>--handshake</code> 在此模式被忽略。</p>
+      <div class="callout note">
+        <span class="tag">大包 vs 小包</span>
+        64KB 大包很快撞到带宽线速（Gb/s 见顶）；要看批量提交对<strong>消息率</strong>的收益，测小包更明显：
+        <code>--raw -s 1024 -n 5000000 -b 128</code> 的 Mpps 会比大包高一个数量级。
+      </div>
+
+      <h2>其它实用开关</h2>
+      <table>
+        <thead><tr><th>开关</th><th>作用</th></tr></thead>
+        <tbody>
+          <tr><td><code>--depth N</code></td><td>队列深度 / 信用窗口（两端一致才有对照意义；<code>0</code>=库默认 128）</td></tr>
+          <tr><td><code>--poll busy|event</code></td><td>非 raw 模式的 CQ 排空方式：忙轮询低延迟、事件驱动省 CPU</td></tr>
+          <tr><td><code>--handshake</code></td><td>非 raw 模式改用 TCP 握手而非 rdma_cm</td></tr>
+          <tr><td><code>--raw-onebuf</code></td><td>raw 诊断用：每次发同一块固定区域而非轮转槽位</td></tr>
+        </tbody>
+      </table>
+
+      <h2>怎么选模式</h2>
+      <ul>
+        <li>想看「最朴素的 <code>Conn</code> 能跑多少」→ 默认模式。</li>
+        <li>想看「批量摊薄开销的效果」→ <code>-b N</code>。</li>
+        <li>想看「<code>rdmanet</code> 能逼近多少网卡线速」→ <code>--raw</code>，再配大 <code>-b</code>（tx-depth）。</li>
+        <li>想要绝对基准 → 直接跑底层 <a href="p3-cmd.html"><code>go_send_bw</code></a> 对照。</li>
+      </ul>
+
+      <div class="callout tip">
+        <span class="tag">下一步</span>
+        这些模式共享一套命令行参数。下一节是 <a href="p3-flags.html">通用命令行参数</a> 速查。
+      </div>
+
+      <div id="page-nav" class="page-nav"></div>
+      <div class="foot">gordma 教程</div>
+    </div>
+  </main>
+</div>
+<script src="nav.js"></script>
+</body>
+</html>
