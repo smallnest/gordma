@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>gordma · 为何慢于原生 RDMA（CGO 开销）</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-page="p3-cgo-overhead">
+<div class="layout">
+  <aside class="sidebar">
+    <a class="brand" href="index.html" style="text-decoration:none">
+      <div class="logo">G</div>
+      <div class="name">gordma</div>
+    </a>
+    <div class="brand-sub">Go 语言 RDMA 网络库 · 教程</div>
+    <nav id="sidebar-nav" class="nav"></nav>
+  </aside>
+  <main class="content">
+    <div class="content-inner">
+      <span class="kicker">第三部分 · 3 / 8</span>
+      <h1>为何慢于原生 RDMA（CGO 开销）</h1>
+      <p class="lede">同一张网卡、同样的 verbs 调用序列，gordma 跑出来的吞吐就是比 C 写的
+        <code>perftest</code> 低一截。这不是 bug，而是 <strong>Go 经由 cgo 调用 libibverbs</strong> 的固有代价。
+        这一节把这笔开销拆开，告诉你它有多大、出在哪、以及怎么把它摊薄到可接受。</p>
+
+      <h2>先看实测差距</h2>
+      <p>某台 400G RoCE v2 主机，64KB 消息、<code>-n 1000000</code>，三个 Send/Recv 带宽工具换算到同一单位后：</p>
+      <table>
+        <thead><tr><th>工具</th><th>语言/路径</th><th>吞吐</th><th>消息率</th></tr></thead>
+        <tbody>
+          <tr><td><code>ib_send_bw</code></td><td>C（原生 verbs）</td><td><strong>~392 Gb/s</strong></td><td>0.747 Mpps</td></tr>
+          <tr><td><code>go_send_bw</code></td><td>Go + cgo（<code>perftest</code> 包）</td><td><strong>~314 Gb/s</strong></td><td>0.598 Mpps</td></tr>
+          <tr><td><code>go_rdmanet_bw --raw</code></td><td>Go + cgo（<code>RawConn</code>）</td><td><strong>~216 Gb/s</strong></td><td>0.413 Mpps</td></tr>
+        </tbody>
+      </table>
+      <div class="callout note">
+        <span class="tag">先对齐单位</span>
+        这三个数字原始输出单位<strong>各不相同</strong>，差出 8 倍：<code>ib_send_bw</code> 是 MiB/s（2²⁰）、
+        <code>go_send_bw</code> 是 MB/s（10⁶）、<code>--raw</code> 是 Gb/s（10⁹ bit）。直接比原始数会得出完全错误的结论。
+        详见 <a href="p3-rdmanet-bw.html">go_rdmanet_bw 详解</a>。
+      </div>
+      <p>注意三者比值在吞吐和消息率上<strong>完全一致</strong>（0.747 : 0.598 : 0.413），说明差距是纯粹的
+        <strong>每个工作请求（WR）的固定开销</strong>，与数据量无关——这正是 cgo 的典型特征。</p>
+
+      <h2>一次 cgo 调用到底贵在哪</h2>
+      <p>很多人以为 cgo 慢是因为「调用 C 函数本身慢」。其实不是。一次 <code>C.ibv_post_send(...)</code>
+        现代 Go 上约 <strong>40–60ns</strong>，开销主要不在那句 C 调用，而在它前后运行时要做的协调：</p>
+      <table>
+        <thead><tr><th>环节</th><th>做了什么</th><th>能不能省</th></tr></thead>
+        <tbody>
+          <tr><td>栈切换</td><td>从 goroutine 的小栈切到系统栈（<code>g0</code>），因为 C 代码需要一个完整的、不会被移动的 C 栈</td><td>不能——只要从 Go 进 C 就得做</td></tr>
+          <tr><td>调度器协调</td><td>标记当前 P「进入了 syscall/C」，让调度器和抢占式 GC 知道别去抢占、别移动这个 goroutine 的栈</td><td>不能</td></tr>
+          <tr><td>参数编组</td><td>把 Go 的参数按 C ABI 摆好；cgo 在<strong>编译期</strong>生成静态 wrapper，这步几乎零成本</td><td>已是最优</td></tr>
+          <tr><td>指针检查</td><td>cgo 在调用边界检查传入指针是否违反「Go 指针不能指向含 Go 指针的内存」规则</td><td>可减少（见下）</td></tr>
+        </tbody>
+      </table>
+      <p>关键在于<strong>前两项与你调用的是哪个 C 函数无关</strong>，是一道过不去的「进出栅栏」。原生 C 程序直接
+        <code>call</code> 进 libibverbs，没有这道栅栏，所以同样的 verbs 序列就是更快。</p>
+
+      <h2>为什么影响的是「消息率」而不是「带宽」</h2>
+      <p>RDMA 数据搬运本身是网卡 DMA 完成的，CPU 不碰数据——所以 cgo 开销<strong>不</strong>按字节计，而是
+        <strong>按工作请求计</strong>。把上面的吞吐换算成每个 WR 的耗时：</p>
+      <pre><code>go_send_bw : 1e6 WR / ~1.67s  ≈ <span class="s">1.67 µs/WR</span>
+RawConn    : 1e6 WR / ~2.42s  ≈ <span class="s">2.42 µs/WR</span></code></pre>
+      <p>大包（64KB）下每个 WR 搬运很多字节，固定开销被稀释，带宽差距还能容忍；
+        <strong>小包高频</strong>时每个 WR 搬的字节少，固定开销占比飙升，消息率（Mpps）差距会被放大到刺眼。
+        所以 cgo 开销的真正战场是<strong>小消息、高 PPS</strong> 的场景。</p>
+
+      <h2>gordma 怎么把它摊薄</h2>
+      <p>既然每次穿越 cgo 边界都要交「过路费」，优化思路就一条：<strong>减少穿越次数</strong>。</p>
+      <ul>
+        <li><strong>批量提交（<code>PostSendBatch</code> / <code>PipelineBatch</code>）</strong>：用 C 侧 WR 链表把 N 个工作请求
+          <strong>一次 <code>ibv_post_send</code></strong> 提交，把过路费从「每 WR 一次」降到「每批一次」。小包消息率因此可提升约一个数量级。</li>
+        <li><strong>忙轮询（<code>PollBusy</code>）</strong>：避免事件驱动每次唤醒都要 <code>ibv_get_cq_event</code> + 一次系统调用；
+          忙轮询直接读 CQ 内存，热路径上几乎不过 cgo 边界。</li>
+        <li><strong>复用 scratch 缓冲</strong>：<code>PostSend</code> 热路径用每 QP 预分配的 C 侧 SGE 数组，
+          避免每次调用都做指针检查和堆分配。</li>
+        <li><strong>预注册内存 + 零拷贝（<code>SendBuffer</code>）</strong>：省掉 bounce buffer 拷贝（这部分是 CPU 成本，不是 cgo 成本，但同样压低 per-WR 开销）。</li>
+      </ul>
+      <div class="callout note">
+        <span class="tag">还有一层差距</span>
+        上表里 <code>go_send_bw</code>（314）和 <code>RawConn</code>（216）<strong>都是 Go + 每 WR 一次 cgo</strong>，
+        却仍差约 1.45 倍。这部分<strong>不是 cgo 能解释的</strong>，是库实现里尚待优化的空间（用
+        <code>GORDMA_PROBE=1</code> 看 post/poll 占比可定位）。换句话说：cgo 解释了 Go 追不上 C 的那部分，
+        但追平 <code>go_send_bw</code> 是另一回事。
+      </div>
+
+      <h2>能不能换掉 cgo？libffi 行不行</h2>
+      <p>不行，<strong>libffi 只会更慢</strong>。它在<strong>运行时</strong>读类型描述符、动态拼调用栈帧（本质是反射式调用），
+        比 cgo 编译期生成的静态 wrapper 更慢；而且上面那道「栈切换 + 调度器协调」的栅栏它一样省不掉。
+        libffi/<code>purego</code> 那类方案的价值是<strong>免 C 工具链、纯 Go 交叉编译</strong>，不是性能。</p>
+      <p>真要逼近原生 C，只有两条路，代价都不小：</p>
+      <table>
+        <thead><tr><th>方向</th><th>思路</th><th>代价</th></tr></thead>
+        <tbody>
+          <tr><td>循环下沉到 C</td><td>一次 cgo 调用驱动「post 满 → poll → 补发」整个流水线循环，每秒只过界几次而非几十万次</td><td>失去 Go 侧对每个 WR 的控制，灵活性下降</td></tr>
+          <tr><td>Direct Verbs / DevX</td><td>在 mmap 的内存里直接构造 WQE、敲 doorbell（mmio 写），全程在 Go 里完成，每个 WR 零 C 调用</td><td>实现复杂，且绑定特定网卡（如 mlx5）</td></tr>
+        </tbody>
+      </table>
+
+      <h2>该不该在意</h2>
+      <ul>
+        <li><strong>大多数业务</strong>：gordma 即便有 cgo 开销，吞吐仍是 TCP 的数十倍、延迟低一个数量级。这点开销完全不该是你的瓶颈。</li>
+        <li><strong>大包传输</strong>：固定开销被字节数稀释，gordma 和原生差距很小，放心用。</li>
+        <li><strong>小包、极致 PPS、要榨干网卡</strong>：先上 <a href="p2-rawconn.html">RawConn</a> + 批量 + 忙轮询；
+          若仍不够，才考虑上面两条「下沉」方案，或直接用 C 的 perftest 做基准。</li>
+      </ul>
+
+      <div class="callout tip">
+        <span class="tag">一句话</span>
+        cgo 是 Go 调用 RDMA 必交的过路费，按<strong>工作请求</strong>计、不按字节计；用批量和忙轮询把穿越次数压下去，
+        它就不再是瓶颈。想看它在你的负载上到底占多少，跑 <code>GORDMA_PROBE=1 go_rdmanet_bw --raw</code> 看
+        post/poll 拆分。
+      </div>
+
+      <div id="page-nav" class="page-nav"></div>
+      <div class="foot">gordma 教程</div>
+    </div>
+  </main>
+</div>
+<script src="nav.js"></script>
+</body>
+</html>

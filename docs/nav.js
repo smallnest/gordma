@@ -47,6 +47,7 @@ const TOC = [
     pages: [
       { id: "p3-cmd",          title: "cmd 性能工具",       file: "p3-cmd.html",          section: "工具" },
       { id: "p3-rdmanet-bw",   title: "go_rdmanet_bw 详解", file: "p3-rdmanet-bw.html",   section: "工具" },
+      { id: "p3-cgo-overhead", title: "为何慢于原生 RDMA",  file: "p3-cgo-overhead.html", section: "工具" },
       { id: "p3-flags",        title: "通用命令行参数",     file: "p3-flags.html",        section: "工具" },
       { id: "p3-run-cmd",      title: "运行性能测试",       file: "p3-run-cmd.html",      section: "工具" },
       { id: "p3-examples-run", title: "运行示例",          file: "p3-examples-run.html", section: "示例" },

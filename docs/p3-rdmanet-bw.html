@@ -18,7 +18,7 @@
   </aside>
   <main class="content">
     <div class="content-inner">
-      <span class="kicker">第三部分 · 2 / 7</span>
+      <span class="kicker">第三部分 · 2 / 8</span>
       <h1>go_rdmanet_bw 详解</h1>
       <p class="lede"><code>go_rdmanet_bw</code> 不只是「高层带宽工具」——它内置了三种发送方式，正好对应
         <code>rdmanet</code> 从易用到极致吞吐的不同档位。理解这三种模式，也就理解了高层 API 的性能边界在哪。</p>
@@ -61,7 +61,8 @@
       <h2>模式三：--raw 极限吞吐</h2>
       <p>加 <code>--raw</code> 切到 <a href="p2-rawconn.html">RawConn</a>：无封帧、无流控、单 goroutine post+busy-poll，
         吞吐量级接近底层 <code>perftest</code>（约为 Go 版 <code>go_send_bw</code> 的 0.7 倍、C 版 <code>ib_send_bw</code> 的 0.55 倍——
-        差距主要来自每个 WR 一次 Go→C 的 cgo 跨界，用 <code>GORDMA_PROBE=1</code> 可量化）。
+        差距主要来自每个 WR 一次 Go→C 的 cgo 跨界，详见 <a href="p3-cgo-overhead.html">为何慢于原生 RDMA</a>，用
+        <code>GORDMA_PROBE=1</code> 可量化）。
         此模式下 <code>-b</code> 的含义变为 <strong>tx-depth</strong>（in-flight WR 数）。</p>
       <pre><code>./bin/go_rdmanet_bw --raw -d mlx5_1 -x 3 -b 128             <span class="c"># 服务端</span>
 ./bin/go_rdmanet_bw --raw -s 65536 -n 1000000 -d mlx5_1 -x 3 -b 128 33.0.226.25:18515</code></pre>
