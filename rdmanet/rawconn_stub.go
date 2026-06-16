@@ -85,5 +85,8 @@ func (rc *RawConn) RecvDrain(iters, txDepth int, rebuild func(wrID uint64) gordm
 	return gordma.ErrNotSupported
 }
 
+// ProbeStats returns zero on the stub build.
+func (rc *RawConn) ProbeStats() (post, poll time.Duration) { return 0, 0 }
+
 // Close is a no-op on the stub build.
 func (rc *RawConn) Close() error { return nil }

@@ -261,6 +261,9 @@ func runServerRaw(addr string, size, txDepth int, oneBuf bool, opts []rdmanet.Op
 	if err := rc.RecvDrain(1<<62, txDepth, rebuild); err != nil {
 		fmt.Println("raw server stopped:", err)
 	}
+	if post, poll := rc.ProbeStats(); post > 0 || poll > 0 {
+		fmt.Printf("probe: recv-post=%v, poll=%v\n", post, poll)
+	}
 	return nil
 }
 
@@ -327,5 +330,9 @@ func runClientRaw(server string, size, iters, txDepth int, oneBuf, single bool, 
 	}
 	fmt.Printf("%s Send(txDepth=%d): sent %d x %d bytes in %v: %.2f Gb/s, %.3f Mpps\n",
 		label, txDepth, iters, size, elapsed, gbps, mpps)
+	if post, poll := rc.ProbeStats(); post > 0 || poll > 0 {
+		fmt.Printf("probe: post=%v (%.1f%%), poll=%v (%.1f%%) of %v\n",
+			post, 100*float64(post)/float64(elapsed), poll, 100*float64(poll)/float64(elapsed), elapsed)
+	}
 	return nil
 }

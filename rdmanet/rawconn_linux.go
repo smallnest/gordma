@@ -4,6 +4,7 @@ package rdmanet
 
 import (
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -20,6 +21,14 @@ type RawConn struct {
 	cq   *gordma.CQ
 	qp   *gordma.QP
 	peer handshake.EndpointInfo
+
+	// Lightweight loop probes (enabled when GORDMA_PROBE is set). The Pipeline/
+	// RecvDrain drivers run on a single goroutine, so plain counters suffice;
+	// they split wall time between the post path (CPU/cgo to submit WRs) and the
+	// poll path (busy-spinning for completions, i.e. waiting on the wire/peer).
+	probe  bool
+	postNs int64
+	pollNs int64
 
 	closeOnce sync.Once
 }
@@ -122,7 +131,7 @@ func buildRawConn(cfg config) (*RawConn, handshake.EndpointInfo, error) {
 	if err != nil {
 		return nil, zero, err
 	}
-	rc := &RawConn{ctx: ctx, pd: pd}
+	rc := &RawConn{ctx: ctx, pd: pd, probe: os.Getenv("GORDMA_PROBE") != ""}
 
 	cq, err := ctx.CreateCQ(cfg.queueDepth*2+1, nil) // busy-poll: no comp channel
 	if err != nil {
@@ -244,7 +253,8 @@ func (rc *RawConn) Pipeline(iters, txDepth int, post func(wrID uint64) error) er
 	if rc == nil || rc.qp == nil || rc.cq == nil {
 		return gordma.ErrClosed
 	}
-	return pipeline(iters, txDepth, post, rc.cq.Poll)
+	post, poll := rc.probed(post, rc.cq.Poll)
+	return pipeline(iters, txDepth, post, poll)
 }
 
 // RecvDrain runs the passive side of a Send/Recv throughput run: pre-post
@@ -256,7 +266,8 @@ func (rc *RawConn) RecvDrain(iters, txDepth int, rebuild func(wrID uint64) gordm
 		return gordma.ErrClosed
 	}
 	post := func(wrID uint64) error { return rc.qp.PostRecv(rebuild(wrID)) }
-	return drain(iters, txDepth, post, rc.cq.Poll)
+	post, poll := rc.probed(post, rc.cq.Poll)
+	return drain(iters, txDepth, post, poll)
 }
 
 // PostSendBatch submits several send WRs in one call (see gordma.QP.PostSendBatch
@@ -276,7 +287,70 @@ func (rc *RawConn) PipelineBatch(iters, txDepth int, build func(wrID uint64) gor
 	if rc == nil || rc.qp == nil || rc.cq == nil {
 		return gordma.ErrClosed
 	}
-	return pipelineBatch(iters, txDepth, build, rc.qp.PostSendBatch, rc.cq.Poll)
+	postBatch, poll := rc.probedBatch(rc.qp.PostSendBatch, rc.cq.Poll)
+	return pipelineBatch(iters, txDepth, build, postBatch, poll)
+}
+
+// probed wraps a single-WR post func and the poll func with wall-clock timers
+// when GORDMA_PROBE is set, accumulating time spent submitting WRs (postNs) vs.
+// busy-polling for completions (pollNs). When probing is off it returns the
+// originals unchanged so the hot path pays nothing.
+func (rc *RawConn) probed(
+	post func(wrID uint64) error,
+	poll func(wc []gordma.WorkCompletion) (int, error),
+) (func(uint64) error, func([]gordma.WorkCompletion) (int, error)) {
+	if !rc.probe {
+		return post, poll
+	}
+	wrappedPost := func(wrID uint64) error {
+		t0 := time.Now()
+		err := post(wrID)
+		rc.postNs += int64(time.Since(t0))
+		return err
+	}
+	wrappedPoll := func(wc []gordma.WorkCompletion) (int, error) {
+		t0 := time.Now()
+		n, err := poll(wc)
+		rc.pollNs += int64(time.Since(t0))
+		return n, err
+	}
+	return wrappedPost, wrappedPoll
+}
+
+// probedBatch is probed for the batched-submit path: it times PostSendBatch
+// calls (postNs) and Poll calls (pollNs).
+func (rc *RawConn) probedBatch(
+	postBatch func(wrs []gordma.SendWR) error,
+	poll func(wc []gordma.WorkCompletion) (int, error),
+) (func([]gordma.SendWR) error, func([]gordma.WorkCompletion) (int, error)) {
+	if !rc.probe {
+		return postBatch, poll
+	}
+	wrappedPost := func(wrs []gordma.SendWR) error {
+		t0 := time.Now()
+		err := postBatch(wrs)
+		rc.postNs += int64(time.Since(t0))
+		return err
+	}
+	wrappedPoll := func(wc []gordma.WorkCompletion) (int, error) {
+		t0 := time.Now()
+		n, err := poll(wc)
+		rc.pollNs += int64(time.Since(t0))
+		return n, err
+	}
+	return wrappedPost, wrappedPoll
+}
+
+// ProbeStats returns the accumulated time the last Pipeline/PipelineBatch/
+// RecvDrain run spent submitting WRs (post) vs. busy-polling completions (poll),
+// when GORDMA_PROBE is set; both are zero otherwise. A high poll share means the
+// loop is waiting on the wire/peer (not CPU-bound on submit); a high post share
+// means the per-WR submit path (cgo crossing, WR build) is the bottleneck.
+func (rc *RawConn) ProbeStats() (post, poll time.Duration) {
+	if rc == nil {
+		return 0, 0
+	}
+	return time.Duration(rc.postNs), time.Duration(rc.pollNs)
 }
 
 // Close releases the QP/CQ/PD/Context. It is idempotent.
