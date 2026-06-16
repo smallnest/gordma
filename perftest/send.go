@@ -2,10 +2,16 @@ package perftest
 
 import (
 	"io"
+	"os"
 	"time"
 
 	"github.com/smallnest/gordma"
 )
+
+// probeEnabled reports whether GORDMA_PROBE is set, turning on the post-vs-poll
+// timing split in the bandwidth loops. It mirrors the convention used by the
+// rdmanet transport and RawConn probes so the tools report comparable numbers.
+func probeEnabled() bool { return os.Getenv("GORDMA_PROBE") != "" }
 
 // pollOne busy-polls the CQ until exactly one completion arrives, returning an
 // error if the completion status is not success or the QP/CQ is closed.
@@ -30,19 +36,36 @@ func pollOne(cq *gordma.CQ, wc []gordma.WorkCompletion) error {
 // write and read bandwidth benchmarks: it keeps up to cfg.TxDepth work requests
 // outstanding, posting a new one (via post) on each completion until cfg.Iters
 // have completed. post is given the work-request id to use. It returns the
-// measured bandwidth.
+// measured bandwidth, including a post-vs-poll timing split when GORDMA_PROBE
+// is set (the same diagnostic RawConn exposes).
 func runBWPipeline(cfg Config, cq *gordma.CQ, post func(wrID uint64) error) (BWResult, error) {
+	probe := probeEnabled()
+	var postNs, pollNs int64
 	wc := make([]gordma.WorkCompletion, cfg.TxDepth)
 	start := time.Now()
 	posted, completed := 0, 0
 	for posted < cfg.TxDepth && posted < cfg.Iters {
-		if err := post(uint64(posted)); err != nil {
+		if probe {
+			t0 := time.Now()
+			if err := post(uint64(posted)); err != nil {
+				return BWResult{}, err
+			}
+			postNs += int64(time.Since(t0))
+		} else if err := post(uint64(posted)); err != nil {
 			return BWResult{}, err
 		}
 		posted++
 	}
 	for completed < cfg.Iters {
-		n, err := cq.Poll(wc)
+		var n int
+		var err error
+		if probe {
+			t0 := time.Now()
+			n, err = cq.Poll(wc)
+			pollNs += int64(time.Since(t0))
+		} else {
+			n, err = cq.Poll(wc)
+		}
 		if err != nil {
 			return BWResult{}, err
 		}
@@ -52,14 +75,26 @@ func runBWPipeline(cfg Config, cq *gordma.CQ, post func(wrID uint64) error) (BWR
 			}
 			completed++
 			if posted < cfg.Iters {
-				if err := post(uint64(posted)); err != nil {
+				if probe {
+					t0 := time.Now()
+					if err := post(uint64(posted)); err != nil {
+						return BWResult{}, err
+					}
+					postNs += int64(time.Since(t0))
+				} else if err := post(uint64(posted)); err != nil {
 					return BWResult{}, err
 				}
 				posted++
 			}
 		}
 	}
-	return BWResult{Bytes: cfg.Size, Iterations: cfg.Iters, Elapsed: time.Since(start)}, nil
+	return BWResult{
+		Bytes:      cfg.Size,
+		Iterations: cfg.Iters,
+		Elapsed:    time.Since(start),
+		PostWait:   time.Duration(postNs),
+		PollWait:   time.Duration(pollNs),
+	}, nil
 }
 
 // RunSendBW runs the Send/Recv bandwidth benchmark. The client posts cfg.Iters

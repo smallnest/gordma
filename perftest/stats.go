@@ -13,6 +13,12 @@ type BWResult struct {
 	Bytes      int
 	Iterations int
 	Elapsed    time.Duration
+	// PostWait and PollWait are the wall time the client's send loop spent
+	// submitting WRs vs. busy-polling completions, populated only when
+	// GORDMA_PROBE is set (zero otherwise). They are the same diagnostic
+	// RawConn.ProbeStats exposes, for apples-to-apples comparison.
+	PostWait time.Duration
+	PollWait time.Duration
 }
 
 // MBPerSec returns the average bandwidth in megabytes per second (10^6 bytes).
@@ -32,10 +38,16 @@ func (r BWResult) MsgRateMpps() float64 {
 	return float64(r.Iterations) / 1e6 / r.Elapsed.Seconds()
 }
 
-// WriteBW prints the perftest-style bandwidth table to w.
+// WriteBW prints the perftest-style bandwidth table to w. When probe timings
+// are present (GORDMA_PROBE), it appends a post-vs-poll breakdown line.
 func (r BWResult) WriteBW(w io.Writer) {
 	_, _ = fmt.Fprintf(w, "%-12s %-12s %-18s %-14s\n", "#bytes", "#iterations", "BW average[MB/s]", "MsgRate[Mpps]")
 	_, _ = fmt.Fprintf(w, "%-12d %-12d %-18.2f %-14.6f\n", r.Bytes, r.Iterations, r.MBPerSec(), r.MsgRateMpps())
+	if r.PostWait > 0 || r.PollWait > 0 {
+		_, _ = fmt.Fprintf(w, "probe: post=%v (%.1f%%), poll=%v (%.1f%%) of %v\n",
+			r.PostWait, 100*float64(r.PostWait)/float64(r.Elapsed),
+			r.PollWait, 100*float64(r.PollWait)/float64(r.Elapsed), r.Elapsed)
+	}
 }
 
 // LatResult holds per-iteration latency samples (in nanoseconds) and computes
