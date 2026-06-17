@@ -46,7 +46,22 @@ body {
   height: 100vh;
   overflow-y: auto;
   padding: 1.75rem 1.25rem 2.5rem;
+  /* themed scrollbar — Firefox */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(217,119,87,0.35) transparent;
 }
+/* themed scrollbar — WebKit (Chrome/Safari/Edge) */
+.sidebar::-webkit-scrollbar { width: 8px; }
+.sidebar::-webkit-scrollbar-track { background: transparent; }
+.sidebar::-webkit-scrollbar-thumb {
+  background: rgba(217,119,87,0.3);
+  border-radius: 8px;
+  border: 2px solid var(--bg-sidebar);  /* inset look against the sidebar */
+  background-clip: padding-box;
+}
+.sidebar::-webkit-scrollbar-thumb:hover { background: rgba(217,119,87,0.6); background-clip: padding-box; }
+/* hide the thumb until the sidebar is hovered, then fade it in */
+.sidebar::-webkit-scrollbar-thumb { transition: background 0.18s ease; }
 
 .content {
   flex: 1 1 auto;
