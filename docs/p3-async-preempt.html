@@ -62,13 +62,46 @@ taskset -c 200 GOMAXPROCS=1  go_send_bw ...  <span class="s">→ 27029（死稳�
         <li>最后一行是判决书：<strong>单核只要关掉异步抢占，poll 立刻砍半、单核也打满线速。</strong></li>
       </ul>
 
-      <h2>真凶：SIGURG 每 ~10ms 砍一刀</h2>
-      <p>忙轮询循环（<code>runBWPipeline</code> / RawConn 的 <code>Pipeline</code>）会在 Go 代码里
-        <strong>连续自旋几毫秒</strong>，中间不跨任何函数调用边界。Go 运行时的 <code>sysmon</code> 监控线程发现这种
-        「跑太久不让出」的 goroutine，就<strong>每 ~10ms 给它发一个 SIGURG 信号</strong>强制抢占。</p>
-      <p>问题就在这一刀：信号处理器运行的那一瞬间，<strong>没人去取 CQ 上的完成、发送队列被抽干、流水线塌空</strong>；
-        恢复后要重新填满。摊到每个 WR，poll 等待正好被拉长一倍。抢占的<strong>时机是随机的</strong>，所以
-        多核时某轮恰好少挨几刀就冲到线速、多挨几刀就掉下来——这就是「忽高忽低」的来源。</p>
+      <h2>真凶：SIGURG 切碎忙轮询自旋</h2>
+
+      <h3>为什么偏偏打这个循环</h3>
+      <p>Go 的 <code>sysmon</code> 监控线程盯着每个 goroutine，发现某个 goroutine
+        <strong>在同一个 P 上连续跑超过 ~10ms 不让出</strong>就尝试抢占它。对普通代码，抢占能在函数调用的栈检查点上
+        <strong>协作式</strong>完成；但忙轮询循环（<code>runBWPipeline</code> / RawConn 的 <code>Pipeline</code>）是一段
+        紧凑自旋——长时间停在 <code>ibv_poll_cq</code> 这种 cgo 调用和小循环里，<strong>到不了一个能安全让出的协作点</strong>。
+        这时 <code>sysmon</code> 唯一的手段就是<strong>给那个线程发 SIGURG 信号</strong>强行打断。
+        这个循环「跑得久」又「难在安全点让出」，正好是信号式抢占的高频靶子。</p>
+
+      <h3>为什么这一刀格外贵</h3>
+      <p>普通 CPU 密集循环被打断一下几乎无损。但 RDMA 发送流水线是个<strong>收割–补发的闭环</strong>：</p>
+      <pre><code>poll CQ → 收到完成 → 立刻补一个新的 SEND → 再 poll …  <span class="c"># 保持 txDepth=128 个 WR 在飞</span></code></pre>
+      <p>信号打进来的那一瞬间，<strong>没人收割 CQ、也没人补发新 WR</strong>。在途的 128 个 send 陆续完成却无人补位
+        → 网卡发送队列被<strong>抽干</strong> → 恢复后还要从空把流水线重新填满。一个本该 µs 级补位的环节被拉成一个明显的
+        <strong>气泡</strong>。摊到每个 WR，poll 等待正好被拉长一倍。</p>
+
+      <h3>cgo 放大效应</h3>
+      <p>还有一层叠加：因为循环大部分时间停在 cgo 的 <code>ibv_poll_cq</code> 里（C 代码不可被异步抢占），SIGURG 经常
+        <strong>打不中可抢占点</strong>，于是 <code>sysmon</code> 会<strong>反复重发</strong>——不是 10ms 才一刀，而更像信号反复掐。
+        每一刀都打断「收割→补发」的节奏。</p>
+      <div class="callout note">
+        <span class="tag">置信度</span>
+        post/poll 拆分、关 flag 前后的翻倍、单核多核对比都是<strong>实测</strong>；而「cgo 不可抢占点导致 SIGURG 反复重发、
+        形成信号风暴」这一步是<strong>吻合现象的推断</strong>，未用 strace/perf 抓信号频率坐实。想钉死可跑
+        <code>perf trace -e 'signal:*'</code> 或 <code>strace -f -e trace=tgkill,rt_sigreturn</code> 数 SIGURG 频次。
+      </div>
+
+      <h3>对得上实测</h3>
+      <p>回看上面那张 <code>GORDMA_PROBE</code> 表，三个数字逐一吻合这套机制：</p>
+      <ul>
+        <li><strong>post 纹丝不动（~260 ns/WR）</strong>：提交是短促的 cgo 调用，不是那个「跑很久」的段，
+          <code>sysmon</code> 不盯它，抢占影响不到。</li>
+        <li><strong>poll 精确砍半</strong>：循环绝大部分时间花在 poll 上，所有被信号掐出的气泡都归到这一段——
+          它正是抢占的全部落点。</li>
+        <li><strong>「变好」还顺带「变稳」</strong>：抢占的<strong>触发时机是随机的</strong>，某轮少挨几下就接近线速、多挨几下就掉到地板——
+          这正是最早 27k–49k 乱跳的根源。关掉这个信号机制，随机源消失，所以结果不仅变快、还不再忽高忽低。
+          （协作式让出仍保留，goroutine 调度行为一切正常。）</li>
+      </ul>
+
       <div class="callout note">
         <span class="tag">同一个真凶</span>
         <a href="p3-cgo-overhead.html">上一节</a>那条悬案——「RawConn 的 poll 死死钉在 ~1.40µs，逐行核对代码也找不出原因」——
