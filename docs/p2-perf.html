@@ -57,6 +57,12 @@
         事件驱动是对 CPU 友好的通用默认值；忙轮询是延迟敏感用户的<strong>显式</strong>选择。
         <code>PollEvent</code> 是零值（iota 0），也是文档约定的默认。
       </div>
+      <div class="callout tip">
+        <span class="tag">忙轮询的一个坑</span>
+        <code>PollBusy</code> 会在 Go 代码里连续自旋几毫秒不让出，<strong>Go 的信号式异步抢占（每 ~10ms 一个 SIGURG）会周期性切碎它</strong>，
+        让吞吐忽高忽低甚至腰斩。排查与修复（<code>GODEBUG=asyncpreemptoff=1</code>）见
+        <a href="p3-async-preempt.html">异步抢占与抖动</a>。
+      </div>
 
       <h2>队列深度与缓冲区大小</h2>
       <ul>

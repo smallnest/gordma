@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>gordma · 异步抢占：带宽忽高忽低的真凶</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-page="p3-async-preempt">
+<div class="layout">
+  <aside class="sidebar">
+    <a class="brand" href="index.html" style="text-decoration:none">
+      <div class="logo">G</div>
+      <div class="name">gordma</div>
+    </a>
+    <div class="brand-sub">Go 语言 RDMA 网络库 · 教程</div>
+    <nav id="sidebar-nav" class="nav"></nav>
+  </aside>
+  <main class="content">
+    <div class="content-inner">
+      <span class="kicker">第三部分 · 4 / 9</span>
+      <h1>异步抢占：带宽忽高忽低的真凶</h1>
+      <p class="lede"><code>go_send_bw</code> 同一条命令反复跑，吞吐在 <strong>27000～49000 MB/s 之间乱跳</strong>，
+        而 C 的 <code>ib_send_bw</code> 稳如磐石。本节复盘整个排查：从被<strong>证伪</strong>的 NUMA 假设，到
+        <code>GORDMA_PROBE</code> 锁定 poll，最后一个环境变量让单核也打满线速——真凶是 Go 运行时的
+        <strong>信号式异步抢占（async preemption）</strong>。这也顺手解开了
+        <a href="p3-cgo-overhead.html">上一节</a>遗留的悬案：RawConn 的 poll 为什么被死死压在 ~1.40µs。</p>
+
+      <h2>症状：每次都不一样</h2>
+      <p>同机、同命令、同参数，连跑九次（64KB，<code>-n 1000000</code>，单位 MB/s）：</p>
+      <pre><code>35474   29868   28092   27082   <span class="s">49007</span>   40621   <span class="s">49001</span>   33103   <span class="s">48996</span></code></pre>
+      <p>最差到最好差了 <strong>1.8 倍</strong>，且毫无规律。而 <code>ib_send_bw</code> 每次都贴着 ~49000。
+        Go 工具的代码是确定的，网卡和链路也没变——抖动只能来自<strong>进程跑起来之后的运行时行为</strong>。</p>
+
+      <h2>第一个弯路：NUMA 假设被证伪</h2>
+      <p>第一反应：忙轮询的线程被调度器在核间迁移，偶尔跨 NUMA 访问 CQ 内存。于是锁核试验——
+        结果<strong>反过来了</strong>：</p>
+      <pre><code><span class="c"># 锁到任意单核（0 / 24 / 200 都一样）+ GOMAXPROCS=1</span>
+taskset -c 24  GOMAXPROCS=1  go_send_bw ...  <span class="s">→ 27150（死稳定）</span>
+taskset -c 0   GOMAXPROCS=1  go_send_bw ...  <span class="s">→ 27141（死稳定）</span>
+taskset -c 200 GOMAXPROCS=1  go_send_bw ...  <span class="s">→ 27029（死稳定）</span>
+<span class="c"># GOGC=off 也试了，没区别 → GC 排除</span></code></pre>
+      <p>关键反信号：<strong>锁到哪颗核都一样</strong>（NUMA 落点排除），而且单核稳定值正是<strong>地板 ~0.414 Mpps</strong>。
+        换句话说——<strong>高吞吐不是「落对了核」得来的，而是「用了多核」得来的；把活压到单核就塌到地板。</strong>
+        之前忽高忽低，是默认多核时运行时把杂务分散开，偶尔让忙轮询循环「干净独占」了它那颗核。</p>
+
+      <h2>GORDMA_PROBE 锁定：全在 poll</h2>
+      <p>用 <code>GORDMA_PROBE=1</code> 把发送循环拆成<strong>提交 WR（post）</strong>和<strong>忙等完成（poll）</strong>两段
+        （探针机制见 <a href="p3-rdmanet-bw.html">go_rdmanet_bw 详解</a>），三种条件下各跑一次：</p>
+      <table>
+        <thead><tr><th>条件</th><th>post 每 WR</th><th>poll 每 WR</th><th>消息率</th></tr></thead>
+        <tbody>
+          <tr><td>单核（默认）</td><td>256 ns</td><td><strong>1.458 µs</strong></td><td>0.414 Mpps</td></tr>
+          <tr><td>多核（默认）</td><td>266 ns</td><td>0.731 µs</td><td>0.747 Mpps</td></tr>
+          <tr><td>单核 + <code>asyncpreemptoff=1</code></td><td>257 ns</td><td><strong>0.744 µs</strong></td><td><strong>0.747 Mpps</strong></td></tr>
+        </tbody>
+      </table>
+      <p>三行对比下来，结论无可辩驳：</p>
+      <ul>
+        <li><strong>post（cgo 提交）三种条件几乎完全一致</strong>（~260 ns/WR）——和核数、抢占都无关，不是变量。</li>
+        <li><strong>全部差异都在 poll</strong>：单核默认 1.458µs，多核降到 0.731µs，<strong>整整翻倍</strong>。</li>
+        <li>最后一行是判决书：<strong>单核只要关掉异步抢占，poll 立刻砍半、单核也打满线速。</strong></li>
+      </ul>
+
+      <h2>真凶：SIGURG 每 ~10ms 砍一刀</h2>
+      <p>忙轮询循环（<code>runBWPipeline</code> / RawConn 的 <code>Pipeline</code>）会在 Go 代码里
+        <strong>连续自旋几毫秒</strong>，中间不跨任何函数调用边界。Go 运行时的 <code>sysmon</code> 监控线程发现这种
+        「跑太久不让出」的 goroutine，就<strong>每 ~10ms 给它发一个 SIGURG 信号</strong>强制抢占。</p>
+      <p>问题就在这一刀：信号处理器运行的那一瞬间，<strong>没人去取 CQ 上的完成、发送队列被抽干、流水线塌空</strong>；
+        恢复后要重新填满。摊到每个 WR，poll 等待正好被拉长一倍。抢占的<strong>时机是随机的</strong>，所以
+        多核时某轮恰好少挨几刀就冲到线速、多挨几刀就掉下来——这就是「忽高忽低」的来源。</p>
+      <div class="callout note">
+        <span class="tag">同一个真凶</span>
+        <a href="p3-cgo-overhead.html">上一节</a>那条悬案——「RawConn 的 poll 死死钉在 ~1.40µs，逐行核对代码也找不出原因」——
+        就是同一把刀：RawConn 的自旋循环同样被 SIGURG 切碎。结构再一致也没用，因为瓶颈根本不在代码里，
+        而在<strong>运行时的抢占信号</strong>。
+      </div>
+      <div class="callout tip">
+        <span class="tag">为什么 GOMAXPROCS=1 最差</span>
+        把 <code>GOMAXPROCS</code> 设成 1，等于把 <code>sysmon</code>、信号投递、<code>netpoll</code> 这些运行时杂务
+        <strong>全压回唯一那颗自旋核</strong>——所以它最慢也最稳（稳定在地板）。多核时这些杂务能跑到别的 P 上，
+        自旋核才有机会保持干净。
+      </div>
+
+      <h2>修复：preempt.Disable() 重启自己一次</h2>
+      <p>方向因此反转：<strong>不是把循环关进一颗核，而是关掉异步抢占、再给它多核环境</strong>，让运行时杂务跑到别处。
+        关抢占靠 <code>GODEBUG=asyncpreemptoff=1</code>。但有个坑——</p>
+      <pre><code><span class="c">// 这样写编译不过：asyncpreemptoff 不在 go:debug 白名单里</span>
+<span class="c">//go:debug asyncpreemptoff=1</span>
+package main
+<span class="c">// → invalid //go:debug: unknown //go:debug setting "asyncpreemptoff"</span></code></pre>
+      <p><code>GODEBUG</code> 是运行时<strong>在 main 之前</strong>就解析好的，进程没法给自己设。gordma 的做法是让进程
+        <strong>带着这个变量把自己重新 exec 一次</strong>：</p>
+      <pre><code><span class="c">// internal/preempt.Disable()，在每个 bw 工具 main 的第一行调用</span>
+func Disable() {
+    <span class="c">// 已经带上了（重启后的子进程，或用户显式设了）→ 直接返回，不会死循环</span>
+    if 已含 asyncpreemptoff { return }
+    exe, _ := os.Executable()
+    env := 合并出单个 GODEBUG=...,asyncpreemptoff=1
+    syscall.Exec(exe, os.Args, env)  <span class="c">// 同 PID、同 fd、同参数、同退出码</span>
+}</code></pre>
+      <ul>
+        <li><strong>无死循环</strong>：重启后的子进程已带该设置，<code>Disable()</code> 立即返回；用户显式设了
+          <code>asyncpreemptoff</code>（包括 <code>=0</code> 想保留抢占）也尊重、不覆盖。</li>
+        <li><strong>best-effort</strong>：定位或 exec 失败就照常带抢占跑，绝不让工具因此启动失败。</li>
+        <li><strong>两端都要</strong>：<code>go_send_bw</code> / <code>go_write_bw</code> / <code>go_read_bw</code> /
+          <code>go_rdmanet_bw</code> 的客户端和服务端都接入了——服务端的 recv 循环同样是忙等，被抢占会反过来
+          stall 客户端的完成。</li>
+      </ul>
+
+      <div class="callout tip">
+        <span class="tag">一句话</span>
+        Go 写高频忙轮询时，<strong>信号式异步抢占（每 ~10ms 一个 SIGURG）会周期性切碎自旋循环</strong>，
+        让吞吐忽高忽低甚至腰斩。用 <code>GORDMA_PROBE</code> 看 post/poll 拆分定位，确认抖动在 poll；
+        修复就是 <code>GODEBUG=asyncpreemptoff=1</code>——但要靠启动时重新 exec 注入，源码里的 <code>//go:debug</code>
+        指令对它无效。
+      </div>
+
+      <div id="page-nav" class="page-nav"></div>
+      <div class="foot">gordma 教程</div>
+    </div>
+  </main>
+</div>
+<script src="nav.js"></script>
+</body>
+</html>

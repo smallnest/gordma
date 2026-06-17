@@ -18,7 +18,7 @@
   </aside>
   <main class="content">
     <div class="content-inner">
-      <span class="kicker">第三部分 · 3 / 8</span>
+      <span class="kicker">第三部分 · 3 / 9</span>
       <h1>CGO 开销与原生 RDMA 的差距</h1>
       <p class="lede">「Go 经 cgo 调用 libibverbs，所以一定比 C 慢」——这是个流传很广、但<strong>被实测推翻</strong>的直觉。
         本节用同机同口径的实测数据说明：cgo 确实有每次调用的固定开销，但它<strong>既不大、也不是</strong> gordma
@@ -85,10 +85,11 @@ RawConn   poll : <span class="s">~1.40 µs/WR（三次纹丝不动）</span></co
       <ul>
         <li><strong>Go vs C</strong>：没有固有差距。<code>go_send_bw</code> 实测能追平 <code>ib_send_bw</code>（同为 0.747 Mpps）。</li>
         <li><strong>提交路径（post）</strong>：cgo 每 WR ~300ns、占比 ~15%，两个 Go 工具相同——<strong>不解释任何差距</strong>。</li>
-        <li><strong>真正待查的</strong>：RawConn 的完成到达（poll）被稳定压在 ~1.40µs/WR，而 <code>go_send_bw</code> 偶尔能降到 0.75µs。
-          两者 QP/CQ 创建、txDepth、MTU、收发循环结构<strong>逐行核对一致</strong>，这个稳定上限尚未定位。</li>
-        <li><strong>机器抖动</strong>：共享 GPU 主机的 CPU 调频/迁核让结果 ±25% 抖动，是噪声主来源。锁核（<code>taskset</code>）+
-          性能调频后再测，关系才稳定可比。</li>
+        <li><strong>曾经待查、现已查明</strong>：RawConn 的完成到达（poll）被稳定压在 ~1.40µs/WR，而 <code>go_send_bw</code> 偶尔能降到 0.75µs。
+          两者 QP/CQ 创建、txDepth、MTU、收发循环结构<strong>逐行核对一致</strong>——真凶不在代码里，而是 <strong>Go 的信号式异步抢占</strong>
+          周期性切碎忙轮询自旋，详见下一节 <a href="p3-async-preempt.html">异步抢占与抖动</a>。</li>
+        <li><strong>机器抖动 vs 抢占</strong>：共享 GPU 主机的 CPU 调频确有噪声，但「忽高忽低」的主因其实是上面那个异步抢占——
+          下一节用 <code>GORDMA_PROBE</code> 证伪了「锁核 / NUMA」假设（<code>taskset</code> 到任意核都一样），并给出一行环境变量就能稳定打满线速的修复。</li>
       </ul>
 
       <h2>cgo 仍值得优化的地方</h2>
