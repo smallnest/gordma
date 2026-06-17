@@ -4,16 +4,27 @@
 //
 // Requires RDMA hardware (Linux + libibverbs/librdmacm). On unsupported
 // platforms it exits with an error.
+//
+// The busy-poll bandwidth loop is a goroutine that runs for many ms without a
+// function call boundary, so Go's signal-based async preemption (a SIGURG every
+// ~10ms from sysmon) periodically interrupts the spin: while the handler runs,
+// nothing drains the CQ and the send pipeline empties, which roughly doubles
+// the per-WR poll time and halves throughput. main disables async preemption
+// via preempt.Disable to keep the spin tight and the result steady at line
+// rate. (See the GORDMA_PROBE post-vs-poll split: post stays ~260ns/WR either
+// way; only poll changes.)
 package main
 
 import (
 	"fmt"
 	"os"
 
+	"github.com/smallnest/gordma/internal/preempt"
 	"github.com/smallnest/gordma/perftest"
 )
 
 func main() {
+	preempt.Disable()
 	cfg, err := perftest.ParseArgs("go_send_bw", os.Args[1:], os.Stderr)
 	if err != nil {
 		os.Exit(2)

@@ -10,6 +10,12 @@
 //
 // Requires RDMA hardware (Linux + libibverbs/librdmacm). On unsupported
 // platforms it exits with an error.
+//
+// main disables Go's signal-based async preemption (preempt.Disable): the
+// busy-poll loops (RawConn.Pipeline/RecvDrain and the rdmanet transport poll)
+// run for many ms without a call boundary, so a SIGURG every ~10ms interrupts
+// the spin, empties the pipeline, and roughly halves throughput. Disabling it
+// keeps the result steady at line rate.
 package main
 
 import (
@@ -20,11 +26,13 @@ import (
 	"time"
 
 	"github.com/smallnest/gordma"
+	"github.com/smallnest/gordma/internal/preempt"
 	"github.com/smallnest/gordma/rdmanet"
 	flag "github.com/spf13/pflag"
 )
 
 func main() {
+	preempt.Disable()
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintf(os.Stderr, "go_rdmanet_bw: %v\n", err)
 		os.Exit(1)

@@ -5,16 +5,23 @@
 // RDMA Write requires the TCP handshake path (it carries RKey/RemoteAddr), so
 // the -R (rdma_cm) option is not supported here. Run without an address for
 // server mode; pass the server address for client mode. Requires RDMA hardware.
+//
+// main disables Go's signal-based async preemption (preempt.Disable): the
+// busy-poll bandwidth loop runs for many ms without a call boundary, so a
+// SIGURG every ~10ms interrupts the spin, empties the send pipeline, and
+// roughly halves throughput. Disabling it keeps the result steady at line rate.
 package main
 
 import (
 	"fmt"
 	"os"
 
+	"github.com/smallnest/gordma/internal/preempt"
 	"github.com/smallnest/gordma/perftest"
 )
 
 func main() {
+	preempt.Disable()
 	cfg, err := perftest.ParseArgs("go_write_bw", os.Args[1:], os.Stderr)
 	if err != nil {
 		os.Exit(2)
