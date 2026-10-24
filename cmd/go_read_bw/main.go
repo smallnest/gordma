@@ -44,13 +44,16 @@ func run(cfg perftest.Config) error {
 	defer func() { _ = ep.Close() }()
 	defer func() { _ = mr.Close() }()
 
+	// One-sided Read: the server is passive. RunReadBW returns immediately
+	// on the server, so we must hold QP/MR here or the client gets WC 10/12.
+	if cfg.IsServer() {
+		fmt.Println("server ready; QP/MR held. Ctrl+C to stop")
+		select {}
+	}
+
 	res, err := perftest.RunReadBW(cfg, ep, mr)
 	if err != nil {
 		return err
-	}
-	if cfg.IsServer() {
-		fmt.Println("server done")
-		return nil
 	}
 	perftest.PrintBW(os.Stdout, res)
 	return nil
